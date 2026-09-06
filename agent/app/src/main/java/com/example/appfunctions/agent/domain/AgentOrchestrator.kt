@@ -226,6 +226,7 @@ class AgentOrchestrator
         private suspend fun getApiKey(provider: LlmProviderName): String? {
             return when (provider) {
                 LlmProviderName.GEMINI -> settingsRepository.geminiApiKey.first()
+                LlmProviderName.AICORE -> ""
             }
         }
 

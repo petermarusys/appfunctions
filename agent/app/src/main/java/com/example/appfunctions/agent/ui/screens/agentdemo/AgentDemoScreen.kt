@@ -599,13 +599,13 @@ fun ModelDropdown(
         ) {
             item {
                 Text(
-                    "--- Gemini ---",
+                    "--- Gemini (Cloud) ---",
                     color = MaterialTheme.colorScheme.secondary,
                     modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp),
                     style = MaterialTheme.typography.labelLarge,
                 )
             }
-            val models =
+            val cloudModels =
                 listOf(
                     LlmModel.GEMINI_3_5_FLASH,
                     LlmModel.GEMINI_3_1_FLASH_LITE,
@@ -613,7 +613,26 @@ fun ModelDropdown(
                     LlmModel.GEMINI_3_FLASH_PREVIEW,
                     LlmModel.GEMINI_3_1_FLASH_LITE_PREVIEW,
                 )
-            items(models) { model ->
+            items(cloudModels) { model ->
+                DropdownMenuItem(
+                    text = { Text(model.modelName) },
+                    onClick = {
+                        onModelSelected(model)
+                        expanded = false
+                    },
+                    contentPadding = PaddingValues(horizontal = 24.dp, vertical = 8.dp),
+                )
+            }
+            item {
+                Text(
+                    "--- On-Device (AICore) ---",
+                    color = MaterialTheme.colorScheme.secondary,
+                    modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp),
+                    style = MaterialTheme.typography.labelLarge,
+                )
+            }
+            val onDeviceModels = listOf(LlmModel.GEMINI_NANO)
+            items(onDeviceModels) { model ->
                 DropdownMenuItem(
                     text = { Text(model.modelName) },
                     onClick = {
