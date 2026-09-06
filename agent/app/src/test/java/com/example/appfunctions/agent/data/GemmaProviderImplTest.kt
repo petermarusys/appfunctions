@@ -64,7 +64,26 @@ class GemmaProviderImplTest {
         assertNotNull(success.interactionId)
         val textParts = success.parts.filterIsInstance<LlmResponsePart.Text>()
         assertTrue(textParts.isNotEmpty())
-        assertTrue(textParts.any { it.text.contains("Gemma 4 E4B") })
+        assertTrue(textParts.any { it.text.contains("Gemma 4") })
+    }
+
+    @Test
+    fun generateResponse_e2bModel_returnsGemmaResponse() = runBlocking {
+        val response =
+            provider.generateResponse(
+                previousInteractionId = null,
+                input = LlmInput.UserMessage("Hello Gemma 4 E2B"),
+                tools = emptyList(),
+                apiKey = "",
+                modelName = "gemma-4-e2b",
+            )
+
+        assertTrue(response is LlmResponse.Success)
+        val success = response as LlmResponse.Success
+        assertNotNull(success.interactionId)
+        val textParts = success.parts.filterIsInstance<LlmResponsePart.Text>()
+        assertTrue(textParts.isNotEmpty())
+        assertTrue(textParts.any { it.text.contains("gemma-4-e2b") })
     }
 
     @Test

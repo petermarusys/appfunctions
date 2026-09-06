@@ -6,7 +6,7 @@ This document provides a comprehensive overview of how Large Language Models (LL
 
 ## 1. Architectural Overview
 
-The agent module uses an LLM to interpret user instructions, make tool-calling decisions, and execute actions via Android **AppFunctions** and built-in internal tools. Cloud-based (Gemini Cloud), On-Device (AICore / Gemini Nano), and Edge (Gemma 4 E4B) providers are supported.
+The agent module uses an LLM to interpret user instructions, make tool-calling decisions, and execute actions via Android **AppFunctions** and built-in internal tools. Cloud-based (Gemini Cloud), On-Device (AICore / Gemini Nano), and Edge / On-Device (Gemma 4 E4B & E2B) providers are supported.
 
 ```mermaid
 flowchart TD
@@ -17,7 +17,7 @@ flowchart TD
     Orchestrator --> Factory[LlmProviderFactory]
     Factory -->|Provider: GEMINI| Cloud[GeminiProviderImpl\nCloud API]
     Factory -->|Provider: AICORE| OnDevice[AiCoreProviderImpl\nOn-device AICore]
-    Factory -->|Provider: GEMMA| Gemma[GemmaProviderImpl\nGemma 4 E4B]
+    Factory -->|Provider: GEMMA| Gemma[GemmaProviderImpl\nGemma 4 E4B & E2B]
     Cloud -->|HTTP POST /v1beta/interactions| GeminiAPI[Google Gemini API]
     GeminiAPI -->|Function Calls / Text Response| Cloud
     OnDevice -->|Local Inference / Tool Calls| OnDevice
@@ -80,10 +80,10 @@ flowchart TD
 
 ---
 
-### 5. `GemmaProviderImpl` (Gemma 4 E4B Edge)
+### 5. `GemmaProviderImpl` (Gemma 4 E4B / E2B On-Device & Edge)
 - **Location:** `agent/app/src/main/java/com/example/appfunctions/agent/data/GemmaProviderImpl.kt`
 - **Responsibilities:**
-  - **Gemma 4 E4B Execution:** Enables lightweight edge/on-device inference utilizing Gemma 4 E4B architecture.
+  - **Gemma 4 Execution:** Supports lightweight on-device models including `gemma-4-e4b` and `gemma-4-e2b`.
   - **Session & Turn Tracking:** Maintains local conversation history and multi-turn context.
   - **Function Calling:** Formats AppFunction schemas and handles tool execution intents locally.
 

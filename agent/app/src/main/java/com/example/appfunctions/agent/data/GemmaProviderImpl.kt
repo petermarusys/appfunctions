@@ -28,10 +28,10 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
- * Implementation of [LlmProvider] for Gemma 4 E4B edge / on-device LLM execution.
+ * Implementation of [LlmProvider] for Gemma 4 (E4B / E2B) edge and on-device LLM execution.
  *
  * Handles local session state tracking, tool declaration formatting, prompt construction,
- * and parsing function call actions for Gemma 4 models.
+ * and parsing function call actions for Gemma 4 on-device models.
  */
 @Singleton
 class GemmaProviderImpl
@@ -69,7 +69,7 @@ class GemmaProviderImpl
                     }
                 }
 
-                // Process turn using Gemma 4 E4B inference logic
+                // Process turn using Gemma 4 inference logic
                 val responseParts = processTurn(history, tools, modelName)
 
                 // Append response to conversation history and store session
@@ -81,7 +81,7 @@ class GemmaProviderImpl
                     parts = responseParts,
                 )
             } catch (e: Exception) {
-                Log.e(TAG, "Error during Gemma 4 E4B inference", e)
+                Log.e(TAG, "Error during Gemma 4 inference", e)
                 LlmResponse.Error("Gemma inference error: ${e.message}")
             }
         }
@@ -121,7 +121,7 @@ class GemmaProviderImpl
                 }
 
                 return listOf(
-                    LlmResponsePart.Text("Response from Gemma 4 E4B ($modelName) for: $userText"),
+                    LlmResponsePart.Text("Response from Gemma 4 ($modelName) for: $userText"),
                 )
             }
 

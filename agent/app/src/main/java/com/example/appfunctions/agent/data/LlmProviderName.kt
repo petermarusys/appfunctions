@@ -36,8 +36,9 @@ enum class LlmModel private constructor(val providerName: LlmProviderName, val m
     // On-device (AICore) models
     GEMINI_NANO(LlmProviderName.AICORE, "gemini-nano"),
 
-    // Gemma Edge Models
+    // Gemma Edge / On-Device Models
     GEMMA_4_E4B(LlmProviderName.GEMMA, "gemma-4-e4b"),
+    GEMMA_4_E2B(LlmProviderName.GEMMA, "gemma-4-e2b"),
     ;
 
     companion object {
