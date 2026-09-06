@@ -642,6 +642,25 @@ fun ModelDropdown(
                     contentPadding = PaddingValues(horizontal = 24.dp, vertical = 8.dp),
                 )
             }
+            item {
+                Text(
+                    "--- Gemma (Edge) ---",
+                    color = MaterialTheme.colorScheme.secondary,
+                    modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp),
+                    style = MaterialTheme.typography.labelLarge,
+                )
+            }
+            val gemmaModels = listOf(LlmModel.GEMMA_4_E4B)
+            items(gemmaModels) { model ->
+                DropdownMenuItem(
+                    text = { Text(model.modelName) },
+                    onClick = {
+                        onModelSelected(model)
+                        expanded = false
+                    },
+                    contentPadding = PaddingValues(horizontal = 24.dp, vertical = 8.dp),
+                )
+            }
         }
     }
 }
