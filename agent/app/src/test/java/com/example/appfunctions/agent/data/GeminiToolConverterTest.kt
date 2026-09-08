@@ -396,7 +396,7 @@ class GeminiToolConverterTest {
                     "properties": {
                         "param1": {
                             "type": "string",
-                            "enums":["1","2"],
+                            "enum":["1","2"],
                             "description": "A string parameter"
                         }
                     },
