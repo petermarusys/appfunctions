@@ -153,4 +153,125 @@ class AiCoreProviderImplTest {
         val textParts = response.parts.filterIsInstance<LlmResponsePart.Text>()
         assertTrue(textParts.any { it.text.contains("sendNote") })
     }
+
+    @Test
+    fun generateResponse_makeCallIntent_chainsSearchAndCall() = runBlocking {
+        val searchContactsTool =
+            AppFunctionMetadata(
+                id = "com.example.chatapp.appfunctions.BaseChatAppFunctionService#searchContacts",
+                packageName = "com.example.chatapp",
+                isEnabled = true,
+                schema = null,
+                description = "Search contacts",
+                parameters =
+                    listOf(
+                        AppFunctionParameterMetadata(
+                            name = "query",
+                            isRequired = true,
+                            dataType = AppFunctionStringTypeMetadata(isNullable = false),
+                            description = "query",
+                        ),
+                        AppFunctionParameterMetadata(
+                            name = "contactType",
+                            isRequired = true,
+                            dataType = AppFunctionStringTypeMetadata(isNullable = false),
+                            description = "type",
+                        ),
+                    ),
+                response =
+                    AppFunctionResponseMetadata(
+                        valueType = AppFunctionStringTypeMetadata(isNullable = false),
+                        description = "",
+                    ),
+                components = AppFunctionComponentsMetadata(emptyMap()),
+            )
+
+        val makeCallTool =
+            AppFunctionMetadata(
+                id = "com.example.chatapp.appfunctions.BaseChatAppFunctionService#makeCall",
+                packageName = "com.example.chatapp",
+                isEnabled = true,
+                schema = null,
+                description = "Make a call",
+                parameters =
+                    listOf(
+                        AppFunctionParameterMetadata(
+                            name = "endpointValue",
+                            isRequired = true,
+                            dataType = AppFunctionStringTypeMetadata(isNullable = false),
+                            description = "id",
+                        ),
+                    ),
+                response =
+                    AppFunctionResponseMetadata(
+                        valueType = AppFunctionStringTypeMetadata(isNullable = false),
+                        description = "",
+                    ),
+                components = AppFunctionComponentsMetadata(emptyMap()),
+            )
+
+        val tools = listOf(searchContactsTool, makeCallTool)
+
+        // Turn 1: User says "make a call to alice" -> Expect searchContacts tool call
+        val turn1Response =
+            provider.generateResponse(
+                previousInteractionId = null,
+                input = LlmInput.UserMessage("make a call to alice"),
+                tools = tools,
+                apiKey = "",
+                modelName = "gemini-nano",
+            ) as LlmResponse.Success
+
+        val turn1Calls = turn1Response.parts.filterIsInstance<LlmResponsePart.ToolCall>()
+        assertEquals(1, turn1Calls.size)
+        assertEquals("com.example.chatapp.appfunctions.BaseChatAppFunctionService#searchContacts", turn1Calls[0].functionId)
+        assertEquals("alice", turn1Calls[0].arguments["query"])
+
+        // Turn 2: searchContacts returns Alice with endpointValue "1" -> Expect makeCall tool call
+        val searchResultJson = """[{"contactDisplayName":"Alice Smith","contactType":"INDIVIDUAL","endpointDisplayName":"Alice Smith","endpointValue":"1"}]"""
+        val turn2Response =
+            provider.generateResponse(
+                previousInteractionId = turn1Response.interactionId,
+                input =
+                    LlmInput.ToolResponse(
+                        listOf(
+                            ToolOutput(
+                                functionId = "com.example.chatapp.appfunctions.BaseChatAppFunctionService#searchContacts",
+                                callId = turn1Calls[0].callId,
+                                result = searchResultJson,
+                            ),
+                        ),
+                    ),
+                tools = tools,
+                apiKey = "",
+                modelName = "gemini-nano",
+            ) as LlmResponse.Success
+
+        val turn2Calls = turn2Response.parts.filterIsInstance<LlmResponsePart.ToolCall>()
+        assertEquals(1, turn2Calls.size)
+        assertEquals("com.example.chatapp.appfunctions.BaseChatAppFunctionService#makeCall", turn2Calls[0].functionId)
+        assertEquals("1", turn2Calls[0].arguments["endpointValue"])
+
+        // Turn 3: makeCall finishes -> Expect confirmation text
+        val turn3Response =
+            provider.generateResponse(
+                previousInteractionId = turn2Response.interactionId,
+                input =
+                    LlmInput.ToolResponse(
+                        listOf(
+                            ToolOutput(
+                                functionId = "com.example.chatapp.appfunctions.BaseChatAppFunctionService#makeCall",
+                                callId = turn2Calls[0].callId,
+                                result = "{}",
+                            ),
+                        ),
+                    ),
+                tools = tools,
+                apiKey = "",
+                modelName = "gemini-nano",
+            ) as LlmResponse.Success
+
+        val turn3Text = turn3Response.parts.filterIsInstance<LlmResponsePart.Text>()
+        assertTrue(turn3Text.any { it.text.contains("call", ignoreCase = true) })
+    }
 }

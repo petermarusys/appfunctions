@@ -330,7 +330,7 @@ class AgentOrchestrator
                                 sendMessageUseCase(
                                     threadId = message.threadId,
                                     role = MessageRole.ASSISTANT,
-                                    textContent = textContent,
+                                    textContent = textContent.ifBlank { "Action ready" },
                                     processingStatus = MessageProcessingStatus.PROCESSED,
                                     pendingIntentId = toolResult.pendingIntentId,
                                 )
