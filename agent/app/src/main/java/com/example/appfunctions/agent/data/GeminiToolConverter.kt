@@ -140,7 +140,7 @@ class GeminiToolConverter
                         val enumValues = dataType.enumValues
                         if (!enumValues.isNullOrEmpty()) {
                             put(
-                                KEY_ENUMS,
+                                KEY_ENUM,
                                 buildJsonArray {
                                     for (enumValue in enumValues) {
                                         add(JsonPrimitive(enumValue))
@@ -157,7 +157,7 @@ class GeminiToolConverter
                         val enumValues = dataType.enumValues
                         if (!enumValues.isNullOrEmpty()) {
                             put(
-                                KEY_ENUMS,
+                                KEY_ENUM,
                                 buildJsonArray {
                                     for (enumValue in enumValues) {
                                         add(JsonPrimitive(enumValue))
@@ -294,7 +294,7 @@ class GeminiToolConverter
             private const val VALUE_NUMBER = "number"
             private const val VALUE_ARRAY = "array"
             private const val KEY_ITEMS = "items"
-            private const val KEY_ENUMS = "enum"
+            private const val KEY_ENUM = "enum"
             private val INVALID_NAME_CHARS = Regex("[^a-zA-Z0-9_]")
             private const val MAX_NAME_LENGTH = 64
         }

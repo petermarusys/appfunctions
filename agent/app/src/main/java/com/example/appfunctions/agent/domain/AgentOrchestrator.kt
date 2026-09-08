@@ -197,6 +197,7 @@ class AgentOrchestrator
                 val llmInput = prepareLlmInput(currentToolOutputs, currentInput)
 
                 currentToolOutputs = emptyList()
+                _status.value = AgentStatus.Thinking
                 val response =
                     llmProvider.generateResponse(
                         previousInteractionId = previousInteractionId,
@@ -207,16 +208,19 @@ class AgentOrchestrator
                         serviceTier = serviceTier,
                     )
 
+                Log.d("AgentOrchestrator", "Handling LLM response: $response")
                 when (
                     val handleResult =
                         handleLlmResponse(response, message, tools, capturedAttachments)
                 ) {
                     is HandleResult.Continue -> {
+                        Log.d("AgentOrchestrator", "HandleResult.Continue with ${handleResult.toolOutputs.size} outputs")
                         currentToolOutputs = handleResult.toolOutputs
                         previousInteractionId = handleResult.interactionId
                     }
 
                     is HandleResult.Stop -> {
+                        Log.d("AgentOrchestrator", "HandleResult.Stop")
                         continueLoop = false
                     }
                 }
@@ -315,6 +319,10 @@ class AgentOrchestrator
                             }
 
                             is ExecuteToolCallsResult.PendingIntentAction -> {
+                                Log.d(
+                                    "AgentOrchestrator",
+                                    "Tool returned PendingIntentAction: id=${toolResult.pendingIntentId}, textContent='$textContent'",
+                                )
                                 savePendingIntentUseCase(
                                     toolResult.pendingIntentId,
                                     toolResult.pendingIntent,
@@ -330,6 +338,7 @@ class AgentOrchestrator
                             }
 
                             is ExecuteToolCallsResult.Error -> {
+                                Log.e("AgentOrchestrator", "Tool execution returned ExecuteToolCallsResult.Error")
                                 HandleResult.Stop
                             }
                         }

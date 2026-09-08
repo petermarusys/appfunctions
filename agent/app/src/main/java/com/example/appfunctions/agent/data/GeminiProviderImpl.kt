@@ -127,7 +127,9 @@ class GeminiProviderImpl
                     }
                 }
 
-            Log.d(TAG, "Gemini Request Body: $requestBody")
+            requestBody.toString().chunked(2000).forEachIndexed { index, chunk ->
+                Log.d(TAG, "Gemini Request Body [$index]: $chunk")
+            }
 
             val response: HttpResponse =
                 try {
@@ -141,11 +143,47 @@ class GeminiProviderImpl
                     return LlmResponse.Error("Network error: ${e.message}")
                 }
 
-            val responseBodyText = response.bodyAsText()
-            Log.d(TAG, "Gemini Response Body: $responseBodyText")
+            var finalResponse = response
+            var responseBodyText = response.bodyAsText()
+            responseBodyText.chunked(2000).forEachIndexed { index, chunk ->
+                Log.d(TAG, "Gemini Response Body [$index]: $chunk")
+            }
 
-            if (response.status.value !in 200..299) {
-                return LlmResponse.Error("Gemini API error: ${response.status} - $responseBodyText")
+            if (finalResponse.status.value == 400 && previousInteractionId != null) {
+                Log.w(
+                    TAG,
+                    "Request with previous_interaction_id=$previousInteractionId failed with 400 ($responseBodyText). Retrying without previous_interaction_id.",
+                )
+                val fallbackBody =
+                    buildJsonObject {
+                        requestBody.forEach { (key, value) ->
+                            if (key != KEY_PREVIOUS_INTERACTION_ID) {
+                                put(key, value)
+                            }
+                        }
+                    }
+                val retryResponse =
+                    try {
+                        httpClient.post(GEMINI_INTERACTIONS_URL) {
+                            contentType(ContentType.Application.Json)
+                            header(HEADER_API_KEY, apiKey)
+                            header(HEADER_API_REVISION, VALUE_API_REVISION)
+                            setBody(fallbackBody)
+                        }
+                    } catch (e: Exception) {
+                        null
+                    }
+                if (retryResponse != null) {
+                    finalResponse = retryResponse
+                    responseBodyText = retryResponse.bodyAsText()
+                    responseBodyText.chunked(2000).forEachIndexed { index, chunk ->
+                        Log.d(TAG, "Gemini Retry Response Body [$index]: $chunk")
+                    }
+                }
+            }
+
+            if (finalResponse.status.value !in 200..299) {
+                return LlmResponse.Error("Gemini API error: ${finalResponse.status} - $responseBodyText")
             }
 
             val jsonResponse = Json.parseToJsonElement(responseBodyText).jsonObject

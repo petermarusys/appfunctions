@@ -108,7 +108,10 @@ abstract class DataModule {
                         },
                     )
                 }
-                install(HttpTimeout) { socketTimeoutMillis = 30000 }
+                install(HttpTimeout) {
+                    socketTimeoutMillis = 60000
+                    requestTimeoutMillis = 60000
+                }
             }
         }
     }

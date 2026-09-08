@@ -80,16 +80,21 @@ class ExecuteAppFunctionUseCase
                     )
                 }
 
+            android.util.Log.d("ExecuteAppFunction", "Executing AppFunction: ${function.id} on package: ${function.packageName}")
             return try {
-                when (val response = appFunctionManager.executeAppFunction(request)) {
+                val response = appFunctionManager.executeAppFunction(request)
+                android.util.Log.d("ExecuteAppFunction", "AppFunction response: $response")
+                when (response) {
                     is ExecuteAppFunctionResponse.Success -> {
                         val data = response.returnValue
                         val valueType = function.response.valueType
+                        android.util.Log.d("ExecuteAppFunction", "AppFunction success, valueType=$valueType")
                         if (valueType is AppFunctionParcelableTypeMetadata &&
                             valueType.qualifiedName == PendingIntent::class.java.name
                         ) {
                             val pendingIntent =
                                 data.getParcelable(PROPERTY_RETURN_VALUE, PendingIntent::class.java)
+                            android.util.Log.d("ExecuteAppFunction", "Extracted pendingIntent: $pendingIntent")
                             if (pendingIntent != null) {
                                 ExecuteAppFunctionResult.PendingIntentAction(pendingIntent)
                             } else {
@@ -105,14 +110,17 @@ class ExecuteAppFunctionUseCase
                                     valueType,
                                     function.components,
                                 )
+                            android.util.Log.d("ExecuteAppFunction", "Formatted result JSON: $jsonString")
                             ExecuteAppFunctionResult.Data(data, jsonString)
                         }
                     }
                     is ExecuteAppFunctionResponse.Error -> {
+                        android.util.Log.e("ExecuteAppFunction", "AppFunction error: ${response.error}")
                         ExecuteAppFunctionResult.Error(response.error)
                     }
                 }
             } catch (e: Exception) {
+                android.util.Log.e("ExecuteAppFunction", "AppFunction execution exception: ${e.message}", e)
                 ExecuteAppFunctionResult.Error(e)
             }
         }
