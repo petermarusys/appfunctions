@@ -100,6 +100,16 @@ android {
         }
     }
 
+    aaptOptions {
+        noCompress("litertlm")
+    }
+
+    packaging {
+        jniLibs {
+            useLegacyPackaging = true
+        }
+    }
+
     lint {
         disable += "Instantiatable"
     }
@@ -110,6 +120,7 @@ ksp {
 }
 
 dependencies {
+    implementation(libs.litertlm.android)
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.appcompat)
     implementation(libs.androidx.appfunctions)
