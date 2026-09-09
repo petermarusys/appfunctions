@@ -19,7 +19,8 @@ package com.example.appfunctions.agent.data
 enum class LlmProviderName {
     GEMINI,
     AICORE,
-    GEMMA,
+    GEMMA_4_E2B,
+    GEMMA_4_E4B,
 }
 
 /** Enum representing the supported LLM models. */
@@ -37,8 +38,8 @@ enum class LlmModel private constructor(val providerName: LlmProviderName, val m
     GEMINI_NANO(LlmProviderName.AICORE, "gemini-nano"),
 
     // Gemma Edge / On-Device Models
-    GEMMA_4_E4B(LlmProviderName.GEMMA, "gemma-4-e4b"),
-    GEMMA_4_E2B(LlmProviderName.GEMMA, "gemma-4-e2b"),
+    GEMMA_4_E4B(LlmProviderName.GEMMA_4_E4B, "gemma-4-e4b"),
+    GEMMA_4_E2B(LlmProviderName.GEMMA_4_E2B, "gemma-4-e2b"),
     ;
 
     companion object {

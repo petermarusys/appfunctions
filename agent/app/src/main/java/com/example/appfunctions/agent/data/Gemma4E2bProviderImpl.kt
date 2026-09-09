@@ -34,6 +34,7 @@ import com.google.ai.edge.litertlm.Engine
 import com.google.ai.edge.litertlm.EngineConfig
 import com.google.ai.edge.litertlm.Message
 import com.google.ai.edge.litertlm.OpenApiTool
+import com.google.ai.edge.litertlm.SamplerConfig
 import com.google.ai.edge.litertlm.tool
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
@@ -60,14 +61,14 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
- * Implementation of [LlmProvider] for Gemma 4 (E4B / E2B) edge and on-device LLM execution.
+ * Implementation of [LlmProvider] for Gemma 4 E2B edge and on-device LLM execution.
  *
- * Backed by Google LiteRT-LM (litertlm-android) with CPU/NPU acceleration,
+ * Backed by Google LiteRT-LM (litertlm-android) with Qualcomm NPU / CPU acceleration,
  * tool calling support via OpenApiTool declarations, and graceful fallback to
  * rule-based intent parsing when the on-device model file is unavailable.
  */
 @Singleton
-class GemmaProviderImpl private constructor(
+class Gemma4E2bProviderImpl private constructor(
     private val toolConverter: GeminiToolConverter,
     private val context: Context?,
     @Suppress("UNUSED_PARAMETER") isTest: Boolean,
@@ -94,7 +95,7 @@ class GemmaProviderImpl private constructor(
         apiKey: String,
         modelName: String,
         serviceTier: ServiceTier,
-    ): LlmResponse {
+    ): LlmResponse = withContext(Dispatchers.IO) {
         val newInteractionId = UUID.randomUUID().toString()
 
         val history =
@@ -114,25 +115,26 @@ class GemmaProviderImpl private constructor(
         if (activeEngine != null) {
             try {
                 val responseParts =
-                    withContext(Dispatchers.IO) {
-                        executeLiteRtLmInference(
-                            engine = activeEngine,
-                            previousInteractionId = previousInteractionId,
-                            newInteractionId = newInteractionId,
-                            input = input,
-                            tools = tools,
-                        )
-                    }
+                    executeLiteRtLmInference(
+                        engine = activeEngine,
+                        previousInteractionId = previousInteractionId,
+                        newInteractionId = newInteractionId,
+                        input = input,
+                        tools = tools,
+                        modelName = modelName,
+                        history = history,
+                    )
                 if (responseParts != null && responseParts.isNotEmpty()) {
                     history.add(GemmaTurn.Assistant(responseParts))
                     sessionHistory[newInteractionId] = history
-                    return LlmResponse.Success(
+                    return@withContext LlmResponse.Success(
                         interactionId = newInteractionId,
                         parts = responseParts,
                     )
                 }
             } catch (e: Exception) {
                 Log.w(TAG, "LiteRT-LM inference encountered an issue, falling back: ${e.message}", e)
+                resetEngine()
             }
         }
 
@@ -141,15 +143,15 @@ class GemmaProviderImpl private constructor(
         history.add(GemmaTurn.Assistant(responseParts))
         sessionHistory[newInteractionId] = history
 
-        return LlmResponse.Success(
+        LlmResponse.Success(
             interactionId = newInteractionId,
             parts = responseParts,
         )
     }
 
-    private suspend fun getOrInitEngine(modelName: String): Engine? {
-        if (context == null) return null
-        return initMutex.withLock {
+    private suspend fun getOrInitEngine(modelName: String): Engine? = withContext(Dispatchers.IO) {
+        if (context == null) return@withContext null
+        initMutex.withLock {
             if (engine != null) return@withLock engine
             if (engineInitAttempted) return@withLock null
             engineInitAttempted = true
@@ -224,7 +226,6 @@ class GemmaProviderImpl private constructor(
         val candidates =
             listOf(
                 "/data/local/tmp/gemma-4-E2B-it.litertlm",
-                "/data/local/tmp/gemma-4-E4B-it.litertlm",
                 context?.let { File(it.filesDir, "gemma-4-E2B-it.litertlm").absolutePath },
                 context?.let { File(it.getExternalFilesDir(null), "gemma-4-E2B-it.litertlm").absolutePath },
                 "/data/local/tmp/model.litertlm",
@@ -232,19 +233,47 @@ class GemmaProviderImpl private constructor(
         return candidates.firstOrNull { File(it).exists() }
     }
 
-    private fun executeLiteRtLmInference(
+    private suspend fun resetEngine() = withContext(Dispatchers.IO) {
+        initMutex.withLock {
+            conversations.values.forEach { runCatching { it.close() } }
+            conversations.clear()
+            runCatching { engine?.close() }
+            engine = null
+            engineInitAttempted = false
+            Log.i(TAG, "Engine and conversations have been reset.")
+        }
+    }
+
+    private fun truncateToolResultIfNeeded(result: String, maxChars: Int = 3500): String {
+        if (result.length <= maxChars) return result
+        Log.w(
+            TAG,
+            "Tool output too large (${result.length} chars). Truncating to $maxChars chars to fit model ringbuffer.",
+        )
+        val cutoff = result.lastIndexOf('\n', maxChars).takeIf { it > maxChars / 2 }
+            ?: result.lastIndexOf(',', maxChars).takeIf { it > maxChars / 2 }
+            ?: maxChars
+        return result.substring(0, cutoff) + "\n...[Output truncated to fit model context window: ${result.length} characters originally]"
+    }
+
+    private suspend fun executeLiteRtLmInference(
         engine: Engine,
         previousInteractionId: String?,
         newInteractionId: String,
         input: LlmInput,
         tools: List<AppFunctionMetadata>,
+        modelName: String,
+        history: List<GemmaTurn> = emptyList(),
     ): List<LlmResponsePart>? {
         val userQuery =
             when (input) {
                 is LlmInput.UserMessage -> input.text
                 is LlmInput.ToolResponse -> ""
             }
-        val relevantTools = filterRelevantTools(tools, userQuery)
+        val effectiveQuery = userQuery.ifBlank {
+            history.filterIsInstance<GemmaTurn.User>().lastOrNull()?.text ?: ""
+        }
+        val relevantTools = filterRelevantTools(tools, effectiveQuery)
 
         val toolMap = mutableMapOf<String, AppFunctionMetadata>()
         for (tool in relevantTools) {
@@ -281,12 +310,13 @@ class GemmaProviderImpl private constructor(
                 ConversationConfig(
                     systemInstruction = Contents.of(systemInstructionText),
                     tools = toolProviders,
+                    samplerConfig = SamplerConfig(topK = 1, topP = 1.0, temperature = 0.0),
                     automaticToolCalling = false,
                 )
             conversation = engine.createConversation(config)
         }
 
-        val responseMessage: Message =
+        val responseMessage: Message = try {
             when (input) {
                 is LlmInput.UserMessage -> {
                     Log.d(TAG, "LiteRT-LM sending UserMessage: ${input.text}")
@@ -299,6 +329,7 @@ class GemmaProviderImpl private constructor(
                             input.outputs.forEach { output ->
                                 val matchingTool = tools.find { it.id == output.functionId }
                                 val mappedName = matchingTool?.let { toolConverter.getToolName(it) } ?: output.functionId
+                                val safeResult = truncateToolResultIfNeeded(output.result)
                                 add(
                                     buildJsonObject {
                                         put("type", "function_result")
@@ -306,7 +337,7 @@ class GemmaProviderImpl private constructor(
                                         if (output.callId.isNotEmpty()) {
                                             put("call_id", output.callId)
                                         }
-                                        put("result", output.result)
+                                        put("result", safeResult)
                                     },
                                 )
                             }
@@ -314,15 +345,38 @@ class GemmaProviderImpl private constructor(
                     conversation.sendMessage(resultsArray.toString())
                 }
             }
+        } catch (e: Exception) {
+            val msg = e.message ?: ""
+            if (msg.contains("rewind", ignoreCase = true) && input is LlmInput.UserMessage) {
+                Log.w(TAG, "Encountered rewind error: $msg. Resetting engine and retrying once with fresh engine...")
+                resetEngine()
+                val freshEngine = getOrInitEngine(modelName)
+                if (freshEngine != null) {
+                    return executeLiteRtLmInference(
+                        engine = freshEngine,
+                        previousInteractionId = null,
+                        newInteractionId = newInteractionId,
+                        input = input,
+                        tools = tools,
+                        modelName = modelName,
+                        history = history,
+                    )
+                }
+            }
+            resetEngine()
+            throw e
+        }
 
         conversations[newInteractionId] = conversation
-        return parseLiteRtLmMessage(responseMessage, tools, toolMap)
+        return parseLiteRtLmMessage(responseMessage, tools, toolMap, effectiveQuery, history)
     }
 
     private fun parseLiteRtLmMessage(
         message: Message,
         tools: List<AppFunctionMetadata>,
         toolMap: Map<String, AppFunctionMetadata>,
+        userQuery: String = "",
+        history: List<GemmaTurn> = emptyList(),
     ): List<LlmResponsePart> {
         val parts = mutableListOf<LlmResponsePart>()
 
@@ -333,7 +387,7 @@ class GemmaProviderImpl private constructor(
                 val matchedTool = matchTool(toolCall.name, tools)
 
                 if (matchedTool != null) {
-                    val normalizedArgs = normalizeToolArguments(matchedTool, toolCall.arguments)
+                    val normalizedArgs = normalizeToolArguments(matchedTool, toolCall.arguments, userQuery, history)
                     Log.i(TAG, "Successfully matched native ToolCall: ${matchedTool.id} args=$normalizedArgs")
                     parts.add(
                         LlmResponsePart.ToolCall(
@@ -361,7 +415,7 @@ class GemmaProviderImpl private constructor(
         }
 
         if (combinedText.isNotBlank()) {
-            val parsedParts = parseGeminiStyleResponse(combinedText, tools)
+            val parsedParts = parseGeminiStyleResponse(combinedText, tools, userQuery, history)
             if (parsedParts.isNotEmpty()) {
                 return parsedParts
             }
@@ -439,20 +493,28 @@ class GemmaProviderImpl private constructor(
     internal fun normalizeToolArguments(
         tool: AppFunctionMetadata,
         rawArgs: Map<String, Any?>,
+        userQuery: String = "",
+        history: List<GemmaTurn> = emptyList(),
     ): Map<String, Any?> {
         val effectiveArgs = rawArgs.toMutableMap()
 
-        // 1. Unwrap top-level "properties" object hallucinated from JSON schema
-        val propertiesMap = effectiveArgs["properties"] as? Map<*, *>
-        if (propertiesMap != null) {
-            for ((k, v) in propertiesMap) {
-                if (k is String && !effectiveArgs.containsKey(k)) {
-                    effectiveArgs[k] = v
+        // 1. Unwrap top-level wrapper objects hallucinated from JSON schema
+        for (wrapperKey in listOf("properties", "parameters", "arguments", "args", "params")) {
+            val wrapperMap = effectiveArgs[wrapperKey] as? Map<*, *>
+            if (wrapperMap != null) {
+                for ((k, v) in wrapperMap) {
+                    if (k is String && !effectiveArgs.containsKey(k)) {
+                        effectiveArgs[k] = v
+                    }
+                }
+                if (effectiveArgs.size > 1) {
+                    effectiveArgs.remove(wrapperKey)
                 }
             }
-            if (effectiveArgs.size > 1) {
-                effectiveArgs.remove("properties")
-            }
+        }
+
+        val effectiveUserQuery = userQuery.ifBlank {
+            history.filterIsInstance<GemmaTurn.User>().lastOrNull()?.text ?: ""
         }
 
         val result = mutableMapOf<String, Any?>()
@@ -460,10 +522,31 @@ class GemmaProviderImpl private constructor(
         for (param in tool.parameters) {
             var value: Any? = effectiveArgs[param.name]
 
-            // 2. Try endpointValue aliases
-            if (value == null && param.name.equals("endpointValue", ignoreCase = true)) {
-                value = effectiveArgs["endpointValue"] ?: effectiveArgs["recipientId"]
-                    ?: effectiveArgs["contactId"] ?: effectiveArgs["endpoint"] ?: effectiveArgs["id"]
+            // 2. Try parameter-specific aliases
+            if (value == null) {
+                when {
+                    param.name.equals("query", ignoreCase = true) -> {
+                        value = effectiveArgs["query"] ?: effectiveArgs["name"] ?: effectiveArgs["contactName"]
+                            ?: effectiveArgs["recipientName"] ?: effectiveArgs["displayName"] ?: effectiveArgs["contact"]
+                            ?: effectiveArgs["recipient"] ?: effectiveArgs["person"] ?: effectiveArgs["target"]
+                            ?: effectiveArgs["search"] ?: effectiveArgs["searchText"] ?: effectiveArgs["searchQuery"]
+                            ?: effectiveArgs["searchTerm"] ?: effectiveArgs["term"] ?: effectiveArgs["text"]
+                            ?: effectiveArgs["q"] ?: effectiveArgs["value"]
+                    }
+                    param.name.equals("contactType", ignoreCase = true) -> {
+                        value = effectiveArgs["contactType"] ?: effectiveArgs["type"] ?: effectiveArgs["filterType"]
+                    }
+                    param.name.equals("endpointValue", ignoreCase = true) -> {
+                        value = effectiveArgs["endpointValue"] ?: effectiveArgs["recipientId"]
+                            ?: effectiveArgs["contactId"] ?: effectiveArgs["endpoint"] ?: effectiveArgs["id"]
+                            ?: effectiveArgs["recipient"] ?: effectiveArgs["contact"] ?: effectiveArgs["name"]
+                            ?: effectiveArgs["target"] ?: effectiveArgs["person"]
+                    }
+                    param.name.equals("messageBody", ignoreCase = true) || param.name.equals("message", ignoreCase = true) -> {
+                        value = effectiveArgs["messageBody"] ?: effectiveArgs["message"] ?: effectiveArgs["body"]
+                            ?: effectiveArgs["text"] ?: effectiveArgs["content"] ?: effectiveArgs["msg"]
+                    }
+                }
             }
 
             // 3. Try clean identifier matching (stripping get, set, params, _, case-insensitive)
@@ -496,10 +579,73 @@ class GemmaProviderImpl private constructor(
                 }
             }
 
-            // 6. Default value heuristics for required parameters if still null
+            // 6. If tool has a single primitive parameter and effectiveArgs has a single unused entry
+            if (value == null && tool.parameters.size == 1 && effectiveArgs.size == 1 &&
+                param.dataType !is AppFunctionObjectTypeMetadata && param.dataType !is AppFunctionReferenceTypeMetadata
+            ) {
+                value = effectiveArgs.values.first()
+            }
+
+            // 7. If this required primitive parameter is still null, check if there is an unused argument in effectiveArgs
+            if (value == null && param.isRequired &&
+                param.dataType !is AppFunctionObjectTypeMetadata && param.dataType !is AppFunctionReferenceTypeMetadata
+            ) {
+                val knownParamNames = tool.parameters.map { it.name.lowercase() }.toSet()
+                val unusedEntries = effectiveArgs.filterKeys { it.lowercase() !in knownParamNames }
+                if (unusedEntries.size == 1) {
+                    value = unusedEntries.values.first()
+                }
+            }
+
+            // 8. Extract from user query or conversation history if still null
+            if (value == null) {
+                when {
+                    param.name.equals("query", ignoreCase = true) -> {
+                        if (effectiveUserQuery.isNotBlank()) {
+                            value = extractCallTarget(effectiveUserQuery)
+                                ?: extractMessageTargetAndBody(effectiveUserQuery)?.first
+                                ?: extractContactSearchQuery(effectiveUserQuery)
+                                ?: effectiveUserQuery.replace(
+                                    Regex("""^(?:search\s+contacts?\s+(?:for\s+)?|find\s+contact\s+|lookup\s+|search\s+|find\s+|call\s+|phone\s+|dial\s+|text\s+|message\s+)""", RegexOption.IGNORE_CASE),
+                                    "",
+                                ).trim().takeIf { it.isNotBlank() }
+                        }
+                    }
+                    param.name.equals("endpointValue", ignoreCase = true) -> {
+                        // Check if previous turn had searchContacts result
+                        val lastToolResult = history.filterIsInstance<GemmaTurn.ToolResult>().lastOrNull()
+                        val searchContactOutput = lastToolResult?.outputs?.firstOrNull {
+                            it.functionId.contains("searchContacts", ignoreCase = true)
+                        }
+                        if (searchContactOutput != null) {
+                            val parsed = parseContactSearchResult(searchContactOutput.result)
+                            if (parsed != null) {
+                                value = parsed.first
+                            }
+                        }
+                        if (value == null && effectiveUserQuery.isNotBlank()) {
+                            value = extractCallTarget(effectiveUserQuery)
+                                ?: extractMessageTargetAndBody(effectiveUserQuery)?.first
+                                ?: extractContactSearchQuery(effectiveUserQuery)
+                        }
+                    }
+                    param.name.equals("messageBody", ignoreCase = true) || param.name.equals("message", ignoreCase = true) -> {
+                        if (effectiveUserQuery.isNotBlank()) {
+                            val msgInfo = extractMessageTargetAndBody(effectiveUserQuery)
+                            if (msgInfo != null && msgInfo.second.isNotBlank()) {
+                                value = msgInfo.second
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 9. Default value heuristics for required parameters if still null
             if (value == null && param.isRequired) {
                 if (param.name.equals("contactType", ignoreCase = true)) {
                     value = "INDIVIDUAL"
+                } else if (param.name.equals("query", ignoreCase = true) && effectiveUserQuery.isNotBlank()) {
+                    value = effectiveUserQuery.trim()
                 } else if (param.name.contains("DeviceState", ignoreCase = true) ||
                     param.name.contains("Device", ignoreCase = true)
                 ) {
@@ -511,7 +657,7 @@ class GemmaProviderImpl private constructor(
                 }
             }
 
-            // 7. Post-process object map if value is a Map
+            // 10. Post-process object map if value is a Map
             if (value is Map<*, *>) {
                 @Suppress("UNCHECKED_CAST")
                 val inner = (value as Map<String, Any?>).toMutableMap()
@@ -580,6 +726,8 @@ class GemmaProviderImpl private constructor(
     private fun parseGeminiStyleResponse(
         responseText: String,
         tools: List<AppFunctionMetadata>,
+        userQuery: String = "",
+        history: List<GemmaTurn> = emptyList(),
     ): List<LlmResponsePart> {
         val trimmed = responseText.trim()
         val jsonCandidate = extractJsonObject(trimmed)
@@ -612,7 +760,7 @@ class GemmaProviderImpl private constructor(
                                 LlmResponsePart.ToolCall(
                                     packageName = matchingTool.packageName,
                                     functionId = matchingTool.id,
-                                    arguments = normalizeToolArguments(matchingTool, argumentsMap),
+                                    arguments = normalizeToolArguments(matchingTool, argumentsMap, userQuery, history),
                                     callId = callId,
                                 ),
                             )
@@ -711,7 +859,7 @@ class GemmaProviderImpl private constructor(
             Always reply to the user using concise, friendly, natural human language.
             Never respond to the user with raw JSON or structured code blocks unless making a function call.
             When a user asks you to perform actions using an app, call the appropriate function tool.
-            When a user asks you to call or message a person, check if you already have their endpointValue or ID. If not, call searchContacts first.
+            When a user asks you to call or message a person, check if you already have their endpointValue or ID. If not, call searchContacts first with query set to the person's name and contactType="INDIVIDUAL".
             When a user asks to view, check, or show device state, settings, or status, immediately call getUncategorizedDeviceState with requestInitiatedWhileUnlocked=true. Never ask clarifying questions instead of calling the tool.
             For a specific setting key, call getDeviceStateItem passing the key name as a single string.
             When a user asks you to generate an image, call the generateImage tool. After generateImage completes, confirm to the user in a natural sentence.
@@ -1050,7 +1198,7 @@ class GemmaProviderImpl private constructor(
     }
 
     companion object {
-        private const val TAG = "GemmaProvider"
+        private const val TAG = "Gemma4E2bProvider"
 
         private val CALL_PATTERNS =
             listOf(
@@ -1111,13 +1259,4 @@ class GemmaProviderImpl private constructor(
             return null
         }
     }
-}
-
-/** Represents a conversation turn in Gemma 4 local history. */
-sealed class GemmaTurn {
-    data class User(val text: String) : GemmaTurn()
-
-    data class ToolResult(val outputs: List<ToolOutput>) : GemmaTurn()
-
-    data class Assistant(val parts: List<LlmResponsePart>) : GemmaTurn()
 }

@@ -54,7 +54,8 @@ class DataStoreSettingsRepository
                     when (storedValue.uppercase()) {
                         "GEMINI" -> LlmProviderName.GEMINI
                         "AICORE" -> LlmProviderName.AICORE
-                        "GEMMA" -> LlmProviderName.GEMMA
+                        "GEMMA_4_E2B" -> LlmProviderName.GEMMA_4_E2B
+                        "GEMMA_4_E4B" -> LlmProviderName.GEMMA_4_E4B
                         else -> LlmProviderName.GEMINI
                     }
                 } ?: LlmProviderName.GEMINI

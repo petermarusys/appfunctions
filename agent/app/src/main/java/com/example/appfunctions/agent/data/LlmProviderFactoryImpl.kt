@@ -27,13 +27,16 @@ class LlmProviderFactoryImpl
     constructor(
         private val geminiProvider: GeminiProviderImpl,
         private val aiCoreProvider: AiCoreProviderImpl,
-        private val gemmaProvider: GemmaProviderImpl,
+        private val gemma4E2bProvider: Gemma4E2bProviderImpl,
+        private val gemma4E4bProvider: Gemma4E4bProviderImpl,
     ) : LlmProviderFactory {
+        @Suppress("DEPRECATION")
         override fun getProvider(name: LlmProviderName): LlmProvider {
             return when (name) {
                 LlmProviderName.GEMINI -> geminiProvider
                 LlmProviderName.AICORE -> aiCoreProvider
-                LlmProviderName.GEMMA -> gemmaProvider
+                LlmProviderName.GEMMA_4_E2B -> gemma4E2bProvider
+                LlmProviderName.GEMMA_4_E4B -> gemma4E4bProvider
             }
         }
     }

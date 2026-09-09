@@ -231,7 +231,8 @@ class AgentOrchestrator
             return when (provider) {
                 LlmProviderName.GEMINI -> settingsRepository.geminiApiKey.first()
                 LlmProviderName.AICORE -> ""
-                LlmProviderName.GEMMA -> ""
+                LlmProviderName.GEMMA_4_E2B -> ""
+                LlmProviderName.GEMMA_4_E4B -> ""
             }
         }
 

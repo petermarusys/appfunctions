@@ -36,18 +36,20 @@ import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 
-class GemmaProviderImplTest {
+class Gemma4E2bProviderImplTest {
     private val toolConverter = GeminiToolConverter()
-    private lateinit var provider: GemmaProviderImpl
+    private lateinit var provider: Gemma4E2bProviderImpl
 
     @Before
     fun setUp() {
         mockkStatic(Log::class)
         every { Log.d(any(), any()) } returns 0
+        every { Log.i(any(), any()) } returns 0
         every { Log.w(any<String>(), any<String>()) } returns 0
+        every { Log.w(any<String>(), any<String>(), any()) } returns 0
         every { Log.e(any(), any(), any()) } returns 0
         every { Log.e(any(), any()) } returns 0
-        provider = GemmaProviderImpl(toolConverter)
+        provider = Gemma4E2bProviderImpl(toolConverter)
     }
 
     @Test
@@ -368,6 +370,103 @@ class GemmaProviderImplTest {
                         isRequired = true,
                         dataType = objectType,
                         description = "Parameters",
+                    ),
+                ),
+            response =
+                AppFunctionResponseMetadata(
+                    valueType = AppFunctionStringTypeMetadata(isNullable = false),
+                    description = "",
+                ),
+            components = AppFunctionComponentsMetadata(emptyMap()),
+        )
+    }
+
+    @Test
+    fun normalizeToolArguments_searchContacts_omittedQuery_extractsFromUserQuery() {
+        val tool = createSearchContactsTool()
+        val rawArgs = mapOf("contactType" to "INDIVIDUAL")
+
+        val normalized = provider.normalizeToolArguments(tool, rawArgs, userQuery = "call david")
+
+        assertEquals("INDIVIDUAL", normalized["contactType"])
+        assertEquals("david", normalized["query"])
+    }
+
+    @Test
+    fun normalizeToolArguments_searchContacts_nameAlias_mappedToQuery() {
+        val tool = createSearchContactsTool()
+        val rawArgs = mapOf("name" to "david", "contactType" to "INDIVIDUAL")
+
+        val normalized = provider.normalizeToolArguments(tool, rawArgs)
+
+        assertEquals("INDIVIDUAL", normalized["contactType"])
+        assertEquals("david", normalized["query"])
+    }
+
+    @Test
+    fun normalizeToolArguments_makeCall_resolvesFromPreviousSearchContacts() {
+        val tool =
+            AppFunctionMetadata(
+                id = "com.example.chatapp.appfunctions.BaseChatAppFunctionService#makeCall",
+                packageName = "com.example.chatapp",
+                isEnabled = true,
+                schema = null,
+                description = "Makes a phone call",
+                parameters =
+                    listOf(
+                        AppFunctionParameterMetadata(
+                            name = "endpointValue",
+                            isRequired = true,
+                            dataType = AppFunctionStringTypeMetadata(isNullable = false),
+                            description = "Endpoint value",
+                        ),
+                    ),
+                response =
+                    AppFunctionResponseMetadata(
+                        valueType = AppFunctionStringTypeMetadata(isNullable = false),
+                        description = "",
+                    ),
+                components = AppFunctionComponentsMetadata(emptyMap()),
+            )
+        val history =
+            listOf(
+                GemmaTurn.User("call david"),
+                GemmaTurn.ToolResult(
+                    listOf(
+                        ToolOutput(
+                            functionId = "com.example.chatapp.appfunctions.BaseChatAppFunctionService#searchContacts",
+                            callId = "call1",
+                            result = "[{\"endpointValue\":\"david_id_123\",\"contactDisplayName\":\"David\"}]",
+                        ),
+                    ),
+                ),
+            )
+
+        val normalized = provider.normalizeToolArguments(tool, emptyMap(), userQuery = "", history = history)
+
+        assertEquals("david_id_123", normalized["endpointValue"])
+    }
+
+    private fun createSearchContactsTool(): AppFunctionMetadata {
+        return AppFunctionMetadata(
+            id = "com.example.chatapp.appfunctions.BaseChatAppFunctionService#searchContacts",
+            packageName = "com.example.chatapp",
+            isEnabled = true,
+            schema = null,
+            description = "Searches contacts",
+            parameters =
+                listOf(
+                    AppFunctionParameterMetadata(
+                        name = "query",
+                        isRequired = true,
+                        dataType = AppFunctionStringTypeMetadata(isNullable = false),
+                        description = "Query",
+                    ),
+                    AppFunctionParameterMetadata(
+                        name = "contactType",
+                        isRequired = true,
+                        dataType = AppFunctionStringTypeMetadata(isNullable = false),
+                        description = "Contact type",
                     ),
                 ),
             response =
