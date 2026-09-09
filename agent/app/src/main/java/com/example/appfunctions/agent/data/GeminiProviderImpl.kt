@@ -149,10 +149,10 @@ class GeminiProviderImpl
                 Log.d(TAG, "Gemini Response Body [$index]: $chunk")
             }
 
-            if (finalResponse.status.value == 400 && previousInteractionId != null) {
+            if ((finalResponse.status.value == 400 || finalResponse.status.value == 404) && previousInteractionId != null) {
                 Log.w(
                     TAG,
-                    "Request with previous_interaction_id=$previousInteractionId failed with 400 ($responseBodyText). Retrying without previous_interaction_id.",
+                    "Request with previous_interaction_id=$previousInteractionId failed with ${finalResponse.status.value} ($responseBodyText). Retrying without previous_interaction_id.",
                 )
                 val fallbackBody =
                     buildJsonObject {

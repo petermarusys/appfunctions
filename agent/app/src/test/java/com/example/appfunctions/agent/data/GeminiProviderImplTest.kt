@@ -501,4 +501,103 @@ class GeminiProviderImplTest {
             val textPart = success.parts.first() as LlmResponsePart.Text
             assertEquals("Served on standard", textPart.text)
         }
+
+    @Test
+    fun generateResponse_previousInteractionIdNotFound404_retriesWithoutPreviousInteractionId() =
+        runBlocking {
+            var callCount = 0
+            val capturedBodies = mutableListOf<String>()
+            val mockEngine =
+                MockEngine { request ->
+                    callCount++
+                    capturedBodies.add((request.body as TextContent).text)
+                    if (callCount == 1) {
+                        respond(
+                            content = """{"error":{"message":"Requested entity was not found.","code":"not_found"}}""",
+                            status = HttpStatusCode.NotFound,
+                            headers = headersOf("Content-Type", ContentType.Application.Json.toString()),
+                        )
+                    } else {
+                        respond(
+                            content =
+                                """{"id":"new_interaction_456","steps":[{"type":"model_output","content":[{"type":"text","text":"Hello"}]}]}""",
+                            status = HttpStatusCode.OK,
+                            headers = headersOf("Content-Type", ContentType.Application.Json.toString()),
+                        )
+                    }
+                }
+            val httpClient =
+                HttpClient(mockEngine) {
+                    install(ContentNegotiation) {
+                        json(Json { ignoreUnknownKeys = true; isLenient = true })
+                    }
+                }
+            val provider = GeminiProviderImpl(httpClient, toolConverter)
+
+            val response =
+                provider.generateResponse(
+                    previousInteractionId = "stale_interaction_123",
+                    input = LlmInput.UserMessage("search contact of alice"),
+                    tools = emptyList(),
+                    apiKey = "test_key",
+                    modelName = "gemini-3.5-flash",
+                )
+
+            assertEquals(2, callCount)
+            assertTrue(response is LlmResponse.Success)
+            val success = response as LlmResponse.Success
+            assertEquals("new_interaction_456", success.interactionId)
+
+            val firstBody = Json.parseToJsonElement(capturedBodies[0]).jsonObject
+            val secondBody = Json.parseToJsonElement(capturedBodies[1]).jsonObject
+            assertEquals("stale_interaction_123", firstBody["previous_interaction_id"]?.jsonPrimitive?.content)
+            assertNull(secondBody["previous_interaction_id"])
+        }
+
+    @Test
+    fun generateResponse_previousInteractionIdBadRequest400_retriesWithoutPreviousInteractionId() =
+        runBlocking {
+            var callCount = 0
+            val capturedBodies = mutableListOf<String>()
+            val mockEngine =
+                MockEngine { request ->
+                    callCount++
+                    capturedBodies.add((request.body as TextContent).text)
+                    if (callCount == 1) {
+                        respond(
+                            content = """{"error":{"message":"Invalid interaction ID","code":"invalid_argument"}}""",
+                            status = HttpStatusCode.BadRequest,
+                            headers = headersOf("Content-Type", ContentType.Application.Json.toString()),
+                        )
+                    } else {
+                        respond(
+                            content =
+                                """{"id":"new_interaction_789","steps":[{"type":"model_output","content":[{"type":"text","text":"Hi"}]}]}""",
+                            status = HttpStatusCode.OK,
+                            headers = headersOf("Content-Type", ContentType.Application.Json.toString()),
+                        )
+                    }
+                }
+            val httpClient =
+                HttpClient(mockEngine) {
+                    install(ContentNegotiation) {
+                        json(Json { ignoreUnknownKeys = true; isLenient = true })
+                    }
+                }
+            val provider = GeminiProviderImpl(httpClient, toolConverter)
+
+            val response =
+                provider.generateResponse(
+                    previousInteractionId = "bad_interaction_123",
+                    input = LlmInput.UserMessage("Hi"),
+                    tools = emptyList(),
+                    apiKey = "test_key",
+                    modelName = "gemini-3.5-flash",
+                )
+
+            assertEquals(2, callCount)
+            assertTrue(response is LlmResponse.Success)
+            val success = response as LlmResponse.Success
+            assertEquals("new_interaction_789", success.interactionId)
+        }
 }
