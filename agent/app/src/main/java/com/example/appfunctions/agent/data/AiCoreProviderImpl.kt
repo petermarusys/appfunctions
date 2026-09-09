@@ -21,11 +21,21 @@ import com.example.appfunctions.agent.domain.LlmInput
 import com.example.appfunctions.agent.domain.LlmProvider
 import com.example.appfunctions.agent.domain.LlmResponse
 import com.example.appfunctions.agent.domain.LlmResponsePart
+import com.example.appfunctions.agent.domain.ToolOutput
+import com.google.mlkit.genai.common.FeatureStatus
+import com.google.mlkit.genai.prompt.Generation
+import com.google.mlkit.genai.prompt.GenerativeModel
+import com.google.mlkit.genai.prompt.SystemInstruction
+import com.google.mlkit.genai.prompt.TextPart
+import com.google.mlkit.genai.prompt.generateContentRequest
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonArray
@@ -39,9 +49,12 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
- * Implementation of [LlmProvider] for on-device execution using Android AICore (Gemini Nano).
+ * Implementation of [LlmProvider] for on-device execution using Android AICore (Gemini Nano)
+ * via the ML Kit GenAI Prompt API.
  *
- * Manages local session history across turns, tool formatting, and response parsing.
+ * Supports structured tool conversion similar to GeminiProviderImpl, multi-turn history,
+ * on-device execution with Gemini Nano, and graceful fallback to heuristic intent parsing
+ * when AICore is unavailable (e.g. unit tests or devices without AICore service).
  */
 @Singleton
 class AiCoreProviderImpl
@@ -52,6 +65,9 @@ class AiCoreProviderImpl
 
         // In-memory conversation history keyed by interaction ID
         private val sessionHistory = ConcurrentHashMap<String, MutableList<AiCoreTurn>>()
+
+        // Cached GenerativeModel instance
+        private var generativeModel: GenerativeModel? = null
 
         override suspend fun generateResponse(
             previousInteractionId: String?,
@@ -80,8 +96,14 @@ class AiCoreProviderImpl
                     }
                 }
 
-                // Process turn with the on-device model engine
-                val responseParts = processTurn(history, tools, modelName)
+                // 1. Attempt on-device AICore Gemini Nano inference via ML Kit Prompt API
+                val aiCoreParts = executeAiCoreInference(history, tools, modelName)
+                val responseParts = if (aiCoreParts != null && aiCoreParts.isNotEmpty()) {
+                    aiCoreParts
+                } else {
+                    // 2. Fallback to heuristic intent parsing (for unit tests or devices without AICore)
+                    processTurnFallback(history, tools, modelName)
+                }
 
                 // Save session for subsequent turns
                 history.add(AiCoreTurn.Assistant(responseParts))
@@ -97,7 +119,223 @@ class AiCoreProviderImpl
             }
         }
 
-        private fun processTurn(
+        private suspend fun executeAiCoreInference(
+            history: List<AiCoreTurn>,
+            tools: List<AppFunctionMetadata>,
+            modelName: String,
+        ): List<LlmResponsePart>? {
+            return withContext(Dispatchers.IO) {
+                try {
+                    val client = getOrInitGenerativeModel() ?: return@withContext null
+                    val status = client.checkStatus()
+                    if (status != FeatureStatus.AVAILABLE) {
+                        Log.d(TAG, "AICore Gemini Nano is not available on device (status=$status). Falling back to heuristic.")
+                        return@withContext null
+                    }
+
+                    val convertedTools = convertTools(tools)
+                    val systemInstructionText = getSystemInstruction(convertedTools)
+                    val promptText = buildConversationPrompt(history, tools)
+
+                    val request = generateContentRequest(
+                        SystemInstruction(systemInstructionText),
+                        TextPart(promptText),
+                    ) {
+                        temperature = 0.2f
+                        maxOutputTokens = 1024
+                    }
+
+                    val response = client.generateContent(request)
+                    val candidateText = response.candidates.firstOrNull()?.text ?: ""
+                    Log.d(TAG, "AICore raw output: $candidateText")
+
+                    val parts = parseAiCoreResponse(candidateText, tools)
+                    if (parts.isNotEmpty()) parts else null
+                } catch (e: Throwable) {
+                    Log.w(TAG, "AICore Prompt API execution failed or not supported in current environment: ${e.message}", e)
+                    null
+                }
+            }
+        }
+
+        private fun getOrInitGenerativeModel(): GenerativeModel? {
+            if (generativeModel != null) return generativeModel
+            return try {
+                val model = Generation.getClient()
+                generativeModel = model
+                model
+            } catch (e: Throwable) {
+                Log.w(TAG, "Unable to initialize ML Kit Generation client: ${e.message}")
+                null
+            }
+        }
+
+        private fun convertTools(tools: List<AppFunctionMetadata>): JsonArray {
+            val toolList = tools
+                .sortedByDescending { it.id.startsWith(it.packageName) }
+                .distinctBy { toolConverter.getToolName(it) }
+                .mapNotNull { tool ->
+                    try {
+                        buildJsonObject {
+                            put("type", JsonPrimitive("function"))
+                            val functionSchema = toolConverter.convert(tool)
+                            functionSchema.forEach { (key, value) -> put(key, value) }
+                        }
+                    } catch (e: IllegalArgumentException) {
+                        Log.e(TAG, "Failed to convert tool ${tool.id}: ${e.message}", e)
+                        null
+                    }
+                }
+            return JsonArray(toolList)
+        }
+
+        private fun getSystemInstruction(toolsJson: JsonArray): String {
+            val currentDate = LocalDate.now().toString()
+            return """
+                You are an AI assistant running on Android using on-device Gemini Nano via AICore. Today's date is $currentDate.
+                Always reply to the user using concise, friendly, natural human language.
+                Never respond to the user with raw JSON or structured code blocks unless making a function call.
+                
+                Available tools:
+                ${toolsJson.toString()}
+                
+                When the user request requires executing a tool, output ONLY a JSON object in this exact format:
+                {"type": "function_call", "name": "<tool_name>", "arguments": {<arguments>}}
+                
+                When a user asks you to call or message a person, check if you already have
+                their endpointValue or ID. If not, call searchContacts first.
+                If no tool is needed or all tools have completed, respond directly with natural human language.
+            """.trimIndent()
+        }
+
+        private fun buildConversationPrompt(
+            history: List<AiCoreTurn>,
+            tools: List<AppFunctionMetadata>,
+        ): String {
+            val sb = StringBuilder()
+            for (turn in history) {
+                when (turn) {
+                    is AiCoreTurn.User -> {
+                        sb.appendLine("User: ${turn.text}")
+                    }
+                    is AiCoreTurn.ToolResult -> {
+                        val resultsArray = buildJsonArray {
+                            turn.outputs.forEach { output ->
+                                val matchingTool = tools.find { it.id == output.functionId }
+                                val mappedName = matchingTool?.let { toolConverter.getToolName(it) } ?: output.functionId
+                                add(
+                                    buildJsonObject {
+                                        put("type", "function_result")
+                                        put("name", mappedName)
+                                        if (output.callId.isNotEmpty()) {
+                                            put("call_id", output.callId)
+                                        }
+                                        put("result", output.result)
+                                    },
+                                )
+                            }
+                        }
+                        sb.appendLine("Tool Results: $resultsArray")
+                    }
+                    is AiCoreTurn.Assistant -> {
+                        val textParts = turn.parts.filterIsInstance<LlmResponsePart.Text>().joinToString(" ") { it.text }
+                        val toolCalls = turn.parts.filterIsInstance<LlmResponsePart.ToolCall>()
+                        if (toolCalls.isNotEmpty()) {
+                            for (call in toolCalls) {
+                                val matchingTool = tools.find { it.id == call.functionId }
+                                val toolName = matchingTool?.let { toolConverter.getToolName(it) } ?: call.functionId
+                                val argsJson = Json.encodeToString(JsonObject.serializer(), buildJsonObject {
+                                    call.arguments.forEach { (k, v) -> put(k, JsonPrimitive(v?.toString())) }
+                                })
+                                sb.appendLine(
+                                    "Assistant: {\"type\": \"function_call\", \"name\": \"$toolName\", \"arguments\": $argsJson}",
+                                )
+                            }
+                        }
+                        if (textParts.isNotBlank()) {
+                            sb.appendLine("Assistant: $textParts")
+                        }
+                    }
+                }
+            }
+            sb.append("Assistant: ")
+            return sb.toString()
+        }
+
+        private fun parseAiCoreResponse(
+            responseText: String,
+            tools: List<AppFunctionMetadata>,
+        ): List<LlmResponsePart> {
+            val trimmed = responseText.trim()
+            val jsonCandidate = extractJsonObject(trimmed)
+            if (jsonCandidate != null) {
+                try {
+                    val jsonElement = Json.parseToJsonElement(jsonCandidate).jsonObject
+                    val hasCallType = jsonElement["type"]?.jsonPrimitive?.contentOrNull == "function_call"
+                    val hasNameAndArgs = jsonElement.containsKey("name") &&
+                        (jsonElement.containsKey("arguments") || jsonElement.containsKey("parameters"))
+                    val isFunctionCall = hasCallType || hasNameAndArgs
+
+                    if (isFunctionCall) {
+                        val name = jsonElement["name"]?.jsonPrimitive?.contentOrNull
+                        if (name != null) {
+                            val matchingTool = tools.find { toolConverter.getToolName(it) == name || it.id == name }
+                            if (matchingTool != null) {
+                                val argsElement = jsonElement["arguments"]?.jsonObject
+                                    ?: jsonElement["parameters"]?.jsonObject
+                                val argumentsMap = mutableMapOf<String, Any?>()
+                                argsElement?.forEach { (key, value) ->
+                                    argumentsMap[key] = value.toPrimitive()
+                                }
+                                val callId = jsonElement["call_id"]?.jsonPrimitive?.contentOrNull
+                                    ?: jsonElement["id"]?.jsonPrimitive?.contentOrNull
+                                    ?: UUID.randomUUID().toString()
+                                return listOf(
+                                    LlmResponsePart.ToolCall(
+                                        packageName = matchingTool.packageName,
+                                        functionId = matchingTool.id,
+                                        arguments = argumentsMap,
+                                        callId = callId,
+                                    ),
+                                )
+                            }
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.d(TAG, "Response candidate was not valid tool JSON: ${e.message}")
+                }
+            }
+            return listOf(LlmResponsePart.Text(trimmed))
+        }
+
+        private fun extractJsonObject(text: String): String? {
+            val codeFenceRegex = Regex("""```(?:json)?\s*(\{[\s\S]*?\})\s*```""", RegexOption.IGNORE_CASE)
+            val fenceMatch = codeFenceRegex.find(text)
+            if (fenceMatch != null) {
+                return fenceMatch.groupValues[1]
+            }
+            val firstBrace = text.indexOf('{')
+            val lastBrace = text.lastIndexOf('}')
+            if (firstBrace != -1 && lastBrace != -1 && lastBrace > firstBrace) {
+                return text.substring(firstBrace, lastBrace + 1)
+            }
+            return null
+        }
+
+        private fun JsonElement.toPrimitive(): Any? {
+            return when (this) {
+                is JsonPrimitive -> {
+                    if (this.isString) return this.content
+                    return this.content.toBooleanStrictOrNull()
+                        ?: this.content.toLongOrNull()
+                        ?: this.content.toDoubleOrNull()
+                }
+                is JsonObject -> this.mapValues { it.value.toPrimitive() }
+                is JsonArray -> this.map { it.toPrimitive() }
+            }
+        }
+
+        private fun processTurnFallback(
             history: List<AiCoreTurn>,
             tools: List<AppFunctionMetadata>,
             modelName: String,
@@ -396,6 +634,6 @@ class AiCoreProviderImpl
 /** Represents a conversation turn in on-device AICore history. */
 sealed class AiCoreTurn {
     data class User(val text: String) : AiCoreTurn()
-    data class ToolResult(val outputs: List<com.example.appfunctions.agent.domain.ToolOutput>) : AiCoreTurn()
+    data class ToolResult(val outputs: List<ToolOutput>) : AiCoreTurn()
     data class Assistant(val parts: List<LlmResponsePart>) : AiCoreTurn()
 }

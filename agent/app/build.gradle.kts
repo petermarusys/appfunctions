@@ -121,6 +121,7 @@ ksp {
 
 dependencies {
     implementation(libs.litertlm.android)
+    implementation(libs.mlkit.genai.prompt)
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.appcompat)
     implementation(libs.androidx.appfunctions)

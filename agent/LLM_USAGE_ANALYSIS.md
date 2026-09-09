@@ -73,10 +73,12 @@ flowchart TD
 
 ### 4. `AiCoreProviderImpl` (On-Device AICore)
 - **Location:** `agent/app/src/main/java/com/example/appfunctions/agent/data/AiCoreProviderImpl.kt`
+- **SDK:** `com.google.mlkit:genai-prompt` (ML Kit GenAI Prompt API for Android AICore / Gemini Nano)
 - **Responsibilities:**
-  - **On-Device Inference:** Enables local Gemini Nano execution through Android AICore.
-  - **Local Session Management:** Manages multi-turn conversation history in-memory across interaction turns without cloud network dependency.
-  - **Tool Matching & Calling:** Evaluates user intent against registered AppFunctions, returning `LlmResponsePart.ToolCall` or `LlmResponsePart.Text`.
+  - **On-Device Inference:** Runs local Gemini Nano execution on supported Android devices through AICore via `Generation.getClient()`.
+  - **Gemini-Compatible Tool Schema:** Utilizes `GeminiToolConverter` to declare AppFunction schemas in the system prompt identically to `GeminiProviderImpl`.
+  - **Structured Function Calling:** Formats multi-turn history with `function_result` and parses model outputs into `LlmResponsePart.ToolCall` and `LlmResponsePart.Text`.
+  - **Graceful Fallback:** Automatically falls back to local heuristic intent parsing when AICore is unavailable (e.g. in unit test environments or devices without AICore system services).
 
 ---
 
