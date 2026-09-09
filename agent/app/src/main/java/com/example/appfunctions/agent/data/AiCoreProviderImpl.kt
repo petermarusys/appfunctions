@@ -38,7 +38,6 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
-import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
@@ -62,7 +61,6 @@ class AiCoreProviderImpl
     constructor(
         private val toolConverter: GeminiToolConverter,
     ) : LlmProvider {
-
         // In-memory conversation history keyed by interaction ID
         private val sessionHistory = ConcurrentHashMap<String, MutableList<AiCoreTurn>>()
 
@@ -98,12 +96,13 @@ class AiCoreProviderImpl
 
                 // 1. Attempt on-device AICore Gemini Nano inference via ML Kit Prompt API
                 val aiCoreParts = executeAiCoreInference(history, tools, modelName)
-                val responseParts = if (aiCoreParts != null && aiCoreParts.isNotEmpty()) {
-                    aiCoreParts
-                } else {
-                    // 2. Fallback to heuristic intent parsing (for unit tests or devices without AICore)
-                    processTurnFallback(history, tools, modelName)
-                }
+                val responseParts =
+                    if (aiCoreParts != null && aiCoreParts.isNotEmpty()) {
+                        aiCoreParts
+                    } else {
+                        // 2. Fallback to heuristic intent parsing (for unit tests or devices without AICore)
+                        processTurnFallback(history, tools, modelName)
+                    }
 
                 // Save session for subsequent turns
                 history.add(AiCoreTurn.Assistant(responseParts))
@@ -137,13 +136,14 @@ class AiCoreProviderImpl
                     val systemInstructionText = getSystemInstruction(convertedTools)
                     val promptText = buildConversationPrompt(history, tools)
 
-                    val request = generateContentRequest(
-                        SystemInstruction(systemInstructionText),
-                        TextPart(promptText),
-                    ) {
-                        temperature = 0.2f
-                        maxOutputTokens = 1024
-                    }
+                    val request =
+                        generateContentRequest(
+                            SystemInstruction(systemInstructionText),
+                            TextPart(promptText),
+                        ) {
+                            temperature = 0.2f
+                            maxOutputTokens = 1024
+                        }
 
                     val response = client.generateContent(request)
                     val candidateText = response.candidates.firstOrNull()?.text ?: ""
@@ -171,21 +171,22 @@ class AiCoreProviderImpl
         }
 
         private fun convertTools(tools: List<AppFunctionMetadata>): JsonArray {
-            val toolList = tools
-                .sortedByDescending { it.id.startsWith(it.packageName) }
-                .distinctBy { toolConverter.getToolName(it) }
-                .mapNotNull { tool ->
-                    try {
-                        buildJsonObject {
-                            put("type", JsonPrimitive("function"))
-                            val functionSchema = toolConverter.convert(tool)
-                            functionSchema.forEach { (key, value) -> put(key, value) }
+            val toolList =
+                tools
+                    .sortedByDescending { it.id.startsWith(it.packageName) }
+                    .distinctBy { toolConverter.getToolName(it) }
+                    .mapNotNull { tool ->
+                        try {
+                            buildJsonObject {
+                                put("type", JsonPrimitive("function"))
+                                val functionSchema = toolConverter.convert(tool)
+                                functionSchema.forEach { (key, value) -> put(key, value) }
+                            }
+                        } catch (e: IllegalArgumentException) {
+                            Log.e(TAG, "Failed to convert tool ${tool.id}: ${e.message}", e)
+                            null
                         }
-                    } catch (e: IllegalArgumentException) {
-                        Log.e(TAG, "Failed to convert tool ${tool.id}: ${e.message}", e)
-                        null
                     }
-                }
             return JsonArray(toolList)
         }
 
@@ -197,7 +198,7 @@ class AiCoreProviderImpl
                 Never respond to the user with raw JSON or structured code blocks unless making a function call.
                 
                 Available tools:
-                ${toolsJson.toString()}
+                $toolsJson
                 
                 When the user request requires executing a tool, output ONLY a JSON object in this exact format:
                 {"type": "function_call", "name": "<tool_name>", "arguments": {<arguments>}}
@@ -205,7 +206,7 @@ class AiCoreProviderImpl
                 When a user asks you to call or message a person, check if you already have
                 their endpointValue or ID. If not, call searchContacts first.
                 If no tool is needed or all tools have completed, respond directly with natural human language.
-            """.trimIndent()
+                """.trimIndent()
         }
 
         private fun buildConversationPrompt(
@@ -219,22 +220,23 @@ class AiCoreProviderImpl
                         sb.appendLine("User: ${turn.text}")
                     }
                     is AiCoreTurn.ToolResult -> {
-                        val resultsArray = buildJsonArray {
-                            turn.outputs.forEach { output ->
-                                val matchingTool = tools.find { it.id == output.functionId }
-                                val mappedName = matchingTool?.let { toolConverter.getToolName(it) } ?: output.functionId
-                                add(
-                                    buildJsonObject {
-                                        put("type", "function_result")
-                                        put("name", mappedName)
-                                        if (output.callId.isNotEmpty()) {
-                                            put("call_id", output.callId)
-                                        }
-                                        put("result", output.result)
-                                    },
-                                )
+                        val resultsArray =
+                            buildJsonArray {
+                                turn.outputs.forEach { output ->
+                                    val matchingTool = tools.find { it.id == output.functionId }
+                                    val mappedName = matchingTool?.let { toolConverter.getToolName(it) } ?: output.functionId
+                                    add(
+                                        buildJsonObject {
+                                            put("type", "function_result")
+                                            put("name", mappedName)
+                                            if (output.callId.isNotEmpty()) {
+                                                put("call_id", output.callId)
+                                            }
+                                            put("result", output.result)
+                                        },
+                                    )
+                                }
                             }
-                        }
                         sb.appendLine("Tool Results: $resultsArray")
                     }
                     is AiCoreTurn.Assistant -> {
@@ -244,9 +246,13 @@ class AiCoreProviderImpl
                             for (call in toolCalls) {
                                 val matchingTool = tools.find { it.id == call.functionId }
                                 val toolName = matchingTool?.let { toolConverter.getToolName(it) } ?: call.functionId
-                                val argsJson = Json.encodeToString(JsonObject.serializer(), buildJsonObject {
-                                    call.arguments.forEach { (k, v) -> put(k, JsonPrimitive(v?.toString())) }
-                                })
+                                val argsJson =
+                                    Json.encodeToString(
+                                        JsonObject.serializer(),
+                                        buildJsonObject {
+                                            call.arguments.forEach { (k, v) -> put(k, JsonPrimitive(v?.toString())) }
+                                        },
+                                    )
                                 sb.appendLine(
                                     "Assistant: {\"type\": \"function_call\", \"name\": \"$toolName\", \"arguments\": $argsJson}",
                                 )
@@ -272,8 +278,9 @@ class AiCoreProviderImpl
                 try {
                     val jsonElement = Json.parseToJsonElement(jsonCandidate).jsonObject
                     val hasCallType = jsonElement["type"]?.jsonPrimitive?.contentOrNull == "function_call"
-                    val hasNameAndArgs = jsonElement.containsKey("name") &&
-                        (jsonElement.containsKey("arguments") || jsonElement.containsKey("parameters"))
+                    val hasNameAndArgs =
+                        jsonElement.containsKey("name") &&
+                            (jsonElement.containsKey("arguments") || jsonElement.containsKey("parameters"))
                     val isFunctionCall = hasCallType || hasNameAndArgs
 
                     if (isFunctionCall) {
@@ -281,15 +288,17 @@ class AiCoreProviderImpl
                         if (name != null) {
                             val matchingTool = tools.find { toolConverter.getToolName(it) == name || it.id == name }
                             if (matchingTool != null) {
-                                val argsElement = jsonElement["arguments"]?.jsonObject
-                                    ?: jsonElement["parameters"]?.jsonObject
+                                val argsElement =
+                                    jsonElement["arguments"]?.jsonObject
+                                        ?: jsonElement["parameters"]?.jsonObject
                                 val argumentsMap = mutableMapOf<String, Any?>()
                                 argsElement?.forEach { (key, value) ->
                                     argumentsMap[key] = value.toPrimitive()
                                 }
-                                val callId = jsonElement["call_id"]?.jsonPrimitive?.contentOrNull
-                                    ?: jsonElement["id"]?.jsonPrimitive?.contentOrNull
-                                    ?: UUID.randomUUID().toString()
+                                val callId =
+                                    jsonElement["call_id"]?.jsonPrimitive?.contentOrNull
+                                        ?: jsonElement["id"]?.jsonPrimitive?.contentOrNull
+                                        ?: UUID.randomUUID().toString()
                                 return listOf(
                                     LlmResponsePart.ToolCall(
                                         packageName = matchingTool.packageName,
@@ -345,9 +354,10 @@ class AiCoreProviderImpl
             // If the latest turn is tool results, process next chained action or summarize
             if (lastTurn is AiCoreTurn.ToolResult) {
                 // Check if any output is from searchContacts
-                val searchContactOutput = lastTurn.outputs.firstOrNull {
-                    it.functionId.contains("searchContacts", ignoreCase = true)
-                }
+                val searchContactOutput =
+                    lastTurn.outputs.firstOrNull {
+                        it.functionId.contains("searchContacts", ignoreCase = true)
+                    }
 
                 if (searchContactOutput != null) {
                     val parsed = parseContactSearchResult(searchContactOutput.result)
@@ -381,10 +391,11 @@ class AiCoreProviderImpl
                                     LlmResponsePart.ToolCall(
                                         packageName = sendMessageTool.packageName,
                                         functionId = sendMessageTool.id,
-                                        arguments = mapOf(
-                                            "endpointValue" to endpointValue,
-                                            "messageBody" to body,
-                                        ),
+                                        arguments =
+                                            mapOf(
+                                                "endpointValue" to endpointValue,
+                                                "messageBody" to body,
+                                            ),
                                         callId = callId,
                                     ),
                                 )
@@ -402,9 +413,10 @@ class AiCoreProviderImpl
                 }
 
                 // Check if makeCall completed
-                val makeCallOutput = lastTurn.outputs.firstOrNull {
-                    it.functionId.contains("makeCall", ignoreCase = true)
-                }
+                val makeCallOutput =
+                    lastTurn.outputs.firstOrNull {
+                        it.functionId.contains("makeCall", ignoreCase = true)
+                    }
                 val hasUserCallIntent = history.filterIsInstance<AiCoreTurn.User>().any { extractCallTarget(it.text) != null }
                 if (makeCallOutput != null && hasUserCallIntent) {
                     val originalUserText = history.filterIsInstance<AiCoreTurn.User>().lastOrNull()?.text ?: ""
@@ -416,9 +428,10 @@ class AiCoreProviderImpl
                 }
 
                 // Check if sendMessage completed
-                val sendMessageOutput = lastTurn.outputs.firstOrNull {
-                    it.functionId.contains("sendMessage", ignoreCase = true)
-                }
+                val sendMessageOutput =
+                    lastTurn.outputs.firstOrNull {
+                        it.functionId.contains("sendMessage", ignoreCase = true)
+                    }
                 val hasUserMsgIntent = history.filterIsInstance<AiCoreTurn.User>().any { extractMessageTargetAndBody(it.text) != null }
                 if (sendMessageOutput != null && hasUserMsgIntent) {
                     val originalUserText = history.filterIsInstance<AiCoreTurn.User>().lastOrNull()?.text ?: ""
@@ -429,9 +442,10 @@ class AiCoreProviderImpl
                     )
                 }
 
-                val summaries = lastTurn.outputs.map { output ->
-                    "${output.functionId}: ${output.result}"
-                }
+                val summaries =
+                    lastTurn.outputs.map { output ->
+                        "${output.functionId}: ${output.result}"
+                    }
                 return listOf(
                     LlmResponsePart.Text("I have processed the results: ${summaries.joinToString(", ")}"),
                 )
@@ -470,21 +484,29 @@ class AiCoreProviderImpl
                 if (element is JsonArray && element.isNotEmpty()) {
                     val obj = element[0].jsonObject
                     val endpointValue = obj["endpointValue"]?.jsonPrimitive?.contentOrNull
-                    val displayName = obj["contactDisplayName"]?.jsonPrimitive?.contentOrNull
-                        ?: obj["endpointDisplayName"]?.jsonPrimitive?.contentOrNull
-                        ?: endpointValue
+                    val displayName =
+                        obj["contactDisplayName"]?.jsonPrimitive?.contentOrNull
+                            ?: obj["endpointDisplayName"]?.jsonPrimitive?.contentOrNull
+                            ?: endpointValue
                     if (endpointValue != null) {
                         Pair(endpointValue, displayName ?: endpointValue)
-                    } else null
+                    } else {
+                        null
+                    }
                 } else if (element is JsonObject) {
                     val endpointValue = element["endpointValue"]?.jsonPrimitive?.contentOrNull
-                    val displayName = element["contactDisplayName"]?.jsonPrimitive?.contentOrNull
-                        ?: element["endpointDisplayName"]?.jsonPrimitive?.contentOrNull
-                        ?: endpointValue
+                    val displayName =
+                        element["contactDisplayName"]?.jsonPrimitive?.contentOrNull
+                            ?: element["endpointDisplayName"]?.jsonPrimitive?.contentOrNull
+                            ?: endpointValue
                     if (endpointValue != null) {
                         Pair(endpointValue, displayName ?: endpointValue)
-                    } else null
-                } else null
+                    } else {
+                        null
+                    }
+                } else {
+                    null
+                }
             } catch (e: Exception) {
                 Log.w(TAG, "Failed to parse contact search result", e)
                 null
@@ -557,10 +579,11 @@ class AiCoreProviderImpl
                         args[param.name] = msgInfo?.second ?: userText
                     }
                     param.name.contains("prompt", ignoreCase = true) -> {
-                        val cleanedPrompt = userText.replace(
-                            Regex("""^(?:generate|create|draw)\s+(?:an?\s+)?(?:image|picture)\s+(?:of\s+)?""", RegexOption.IGNORE_CASE),
-                            "",
-                        ).trim()
+                        val cleanedPrompt =
+                            userText.replace(
+                                Regex("""^(?:generate|create|draw)\s+(?:an?\s+)?(?:image|picture)\s+(?:of\s+)?""", RegexOption.IGNORE_CASE),
+                                "",
+                            ).trim()
                         args[param.name] = cleanedPrompt.ifBlank { userText }
                     }
                     param.name.contains("query", ignoreCase = true) || param.name.contains("text", ignoreCase = true) -> {
@@ -571,7 +594,10 @@ class AiCoreProviderImpl
             return args
         }
 
-        private fun matchesCamelCaseWords(simpleName: String, lowerText: String): Boolean {
+        private fun matchesCamelCaseWords(
+            simpleName: String,
+            lowerText: String,
+        ): Boolean {
             val words = simpleName.split(Regex("(?=[A-Z])")).map { it.lowercase() }.filter { it.length > 2 }
             return words.isNotEmpty() && words.all { lowerText.contains(it) }
         }
@@ -579,20 +605,29 @@ class AiCoreProviderImpl
         companion object {
             private const val TAG = "AiCoreProvider"
 
-            private val CALL_PATTERNS = listOf(
-                Regex("""\b(?:make|place)\s+a\s+call\s+to\s+([a-zA-Z0-9\s]+)""", RegexOption.IGNORE_CASE),
-                Regex("""\b(?:call|phone|dial)\s+([a-zA-Z0-9\s]+)""", RegexOption.IGNORE_CASE),
-            )
+            private val CALL_PATTERNS =
+                listOf(
+                    Regex("""\b(?:make|place)\s+a\s+call\s+to\s+([a-zA-Z0-9\s]+)""", RegexOption.IGNORE_CASE),
+                    Regex("""\b(?:call|phone|dial)\s+([a-zA-Z0-9\s]+)""", RegexOption.IGNORE_CASE),
+                )
 
-            private val MESSAGE_PATTERNS = listOf(
-                Regex("""\b(?:send\s+(?:a\s+)?message\s+to|text|message)\s+([a-zA-Z0-9]+)\s+(?:saying|with|:)\s*(.*)""", RegexOption.IGNORE_CASE),
-                Regex("""\b(?:send\s+(?:a\s+)?message\s+to|text|message)\s+([a-zA-Z0-9]+)\s+(.*)""", RegexOption.IGNORE_CASE),
-                Regex("""\b(?:send\s+(?:a\s+)?message\s+to|text|message)\s+([a-zA-Z0-9]+)""", RegexOption.IGNORE_CASE),
-            )
+            private val MESSAGE_PATTERNS =
+                listOf(
+                    Regex(
+                        """\b(?:send\s+(?:a\s+)?message\s+to|text|message)\s+([a-zA-Z0-9]+)\s+(?:saying|with|:)\s*(.*)""",
+                        RegexOption.IGNORE_CASE,
+                    ),
+                    Regex("""\b(?:send\s+(?:a\s+)?message\s+to|text|message)\s+([a-zA-Z0-9]+)\s+(.*)""", RegexOption.IGNORE_CASE),
+                    Regex("""\b(?:send\s+(?:a\s+)?message\s+to|text|message)\s+([a-zA-Z0-9]+)""", RegexOption.IGNORE_CASE),
+                )
 
-            private val SEARCH_PATTERNS = listOf(
-                Regex("""\b(?:search\s+(?:contacts?\s+(?:for\s+)?)?|find\s+contact\s+|lookup\s+)([a-zA-Z0-9]+)""", RegexOption.IGNORE_CASE),
-            )
+            private val SEARCH_PATTERNS =
+                listOf(
+                    Regex(
+                        """\b(?:search\s+(?:contacts?\s+(?:for\s+)?)?|find\s+contact\s+|lookup\s+)([a-zA-Z0-9]+)""",
+                        RegexOption.IGNORE_CASE,
+                    ),
+                )
 
             fun extractCallTarget(text: String): String? {
                 for (pattern in CALL_PATTERNS) {
@@ -629,11 +664,13 @@ class AiCoreProviderImpl
                 return null
             }
         }
-}
+    }
 
 /** Represents a conversation turn in on-device AICore history. */
 sealed class AiCoreTurn {
     data class User(val text: String) : AiCoreTurn()
+
     data class ToolResult(val outputs: List<ToolOutput>) : AiCoreTurn()
+
     data class Assistant(val parts: List<LlmResponsePart>) : AiCoreTurn()
 }

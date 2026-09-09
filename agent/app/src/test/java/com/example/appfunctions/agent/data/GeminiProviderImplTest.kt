@@ -520,7 +520,8 @@ class GeminiProviderImplTest {
                     } else {
                         respond(
                             content =
-                                """{"id":"new_interaction_456","steps":[{"type":"model_output","content":[{"type":"text","text":"Hello"}]}]}""",
+                                """{"id":"new_interaction_456","steps":[{"type":"model_output",""" +
+                                    """"content":[{"type":"text","text":"Hello"}]}]}""",
                             status = HttpStatusCode.OK,
                             headers = headersOf("Content-Type", ContentType.Application.Json.toString()),
                         )
@@ -529,7 +530,12 @@ class GeminiProviderImplTest {
             val httpClient =
                 HttpClient(mockEngine) {
                     install(ContentNegotiation) {
-                        json(Json { ignoreUnknownKeys = true; isLenient = true })
+                        json(
+                            Json {
+                                ignoreUnknownKeys = true
+                                isLenient = true
+                            },
+                        )
                     }
                 }
             val provider = GeminiProviderImpl(httpClient, toolConverter)
@@ -572,7 +578,8 @@ class GeminiProviderImplTest {
                     } else {
                         respond(
                             content =
-                                """{"id":"new_interaction_789","steps":[{"type":"model_output","content":[{"type":"text","text":"Hi"}]}]}""",
+                                """{"id":"new_interaction_789","steps":[{"type":"model_output",""" +
+                                    """"content":[{"type":"text","text":"Hi"}]}]}""",
                             status = HttpStatusCode.OK,
                             headers = headersOf("Content-Type", ContentType.Application.Json.toString()),
                         )
@@ -581,7 +588,12 @@ class GeminiProviderImplTest {
             val httpClient =
                 HttpClient(mockEngine) {
                     install(ContentNegotiation) {
-                        json(Json { ignoreUnknownKeys = true; isLenient = true })
+                        json(
+                            Json {
+                                ignoreUnknownKeys = true
+                                isLenient = true
+                            },
+                        )
                     }
                 }
             val provider = GeminiProviderImpl(httpClient, toolConverter)

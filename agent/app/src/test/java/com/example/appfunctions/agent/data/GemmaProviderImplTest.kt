@@ -16,8 +16,10 @@
 package com.example.appfunctions.agent.data
 
 import android.util.Log
+import androidx.appfunctions.metadata.AppFunctionBooleanTypeMetadata
 import androidx.appfunctions.metadata.AppFunctionComponentsMetadata
 import androidx.appfunctions.metadata.AppFunctionMetadata
+import androidx.appfunctions.metadata.AppFunctionObjectTypeMetadata
 import androidx.appfunctions.metadata.AppFunctionParameterMetadata
 import androidx.appfunctions.metadata.AppFunctionResponseMetadata
 import androidx.appfunctions.metadata.AppFunctionStringTypeMetadata
@@ -49,128 +51,331 @@ class GemmaProviderImplTest {
     }
 
     @Test
-    fun generateResponse_userMessage_returnsGemmaResponse() = runBlocking {
-        val response =
-            provider.generateResponse(
-                previousInteractionId = null,
-                input = LlmInput.UserMessage("Hello Gemma 4"),
-                tools = emptyList(),
-                apiKey = "",
-                modelName = "gemma-4-e4b",
-            )
+    fun generateResponse_userMessage_returnsGemmaResponse() =
+        runBlocking {
+            val response =
+                provider.generateResponse(
+                    previousInteractionId = null,
+                    input = LlmInput.UserMessage("Hello Gemma 4"),
+                    tools = emptyList(),
+                    apiKey = "",
+                    modelName = "gemma-4-e4b",
+                )
 
-        assertTrue(response is LlmResponse.Success)
-        val success = response as LlmResponse.Success
-        assertNotNull(success.interactionId)
-        val textParts = success.parts.filterIsInstance<LlmResponsePart.Text>()
-        assertTrue(textParts.isNotEmpty())
-        assertTrue(textParts.any { it.text.contains("Gemma 4") })
-    }
-
-    @Test
-    fun generateResponse_e2bModel_returnsGemmaResponse() = runBlocking {
-        val response =
-            provider.generateResponse(
-                previousInteractionId = null,
-                input = LlmInput.UserMessage("Hello Gemma 4 E2B"),
-                tools = emptyList(),
-                apiKey = "",
-                modelName = "gemma-4-e2b",
-            )
-
-        assertTrue(response is LlmResponse.Success)
-        val success = response as LlmResponse.Success
-        assertNotNull(success.interactionId)
-        val textParts = success.parts.filterIsInstance<LlmResponsePart.Text>()
-        assertTrue(textParts.isNotEmpty())
-        assertTrue(textParts.any { it.text.contains("gemma-4-e2b") })
-    }
+            assertTrue(response is LlmResponse.Success)
+            val success = response as LlmResponse.Success
+            assertNotNull(success.interactionId)
+            val textParts = success.parts.filterIsInstance<LlmResponsePart.Text>()
+            assertTrue(textParts.isNotEmpty())
+            assertTrue(textParts.any { it.text.contains("Gemma 4") })
+        }
 
     @Test
-    fun generateResponse_multiTurn_maintainsSession() = runBlocking {
-        val firstResponse =
-            provider.generateResponse(
-                previousInteractionId = null,
-                input = LlmInput.UserMessage("First query to Gemma"),
-                tools = emptyList(),
-                apiKey = "",
-                modelName = "gemma-4-e4b",
-            ) as LlmResponse.Success
+    fun generateResponse_e2bModel_returnsGemmaResponse() =
+        runBlocking {
+            val response =
+                provider.generateResponse(
+                    previousInteractionId = null,
+                    input = LlmInput.UserMessage("Hello Gemma 4 E2B"),
+                    tools = emptyList(),
+                    apiKey = "",
+                    modelName = "gemma-4-e2b",
+                )
 
-        val secondResponse =
-            provider.generateResponse(
-                previousInteractionId = firstResponse.interactionId,
-                input = LlmInput.UserMessage("Follow up query"),
-                tools = emptyList(),
-                apiKey = "",
-                modelName = "gemma-4-e4b",
-            )
-
-        assertTrue(secondResponse is LlmResponse.Success)
-    }
+            assertTrue(response is LlmResponse.Success)
+            val success = response as LlmResponse.Success
+            assertNotNull(success.interactionId)
+            val textParts = success.parts.filterIsInstance<LlmResponsePart.Text>()
+            assertTrue(textParts.isNotEmpty())
+            assertTrue(textParts.any { it.text.contains("gemma-4-e2b") })
+        }
 
     @Test
-    fun generateResponse_toolExecution_handlesToolCalls() = runBlocking {
-        val tool =
-            AppFunctionMetadata(
-                id = "com.example.chat.sendMessage",
-                packageName = "com.example.chat",
-                isEnabled = true,
-                schema = null,
-                description = "Sends a chat message",
-                parameters =
-                    listOf(
-                        AppFunctionParameterMetadata(
-                            name = "text",
-                            isRequired = true,
-                            dataType = AppFunctionStringTypeMetadata(isNullable = false),
-                            description = "Message body",
-                        ),
-                    ),
-                response =
-                    AppFunctionResponseMetadata(
-                        valueType = AppFunctionStringTypeMetadata(isNullable = false),
-                        description = "",
-                    ),
-                components = AppFunctionComponentsMetadata(emptyMap()),
-            )
+    fun generateResponse_multiTurn_maintainsSession() =
+        runBlocking {
+            val firstResponse =
+                provider.generateResponse(
+                    previousInteractionId = null,
+                    input = LlmInput.UserMessage("First query to Gemma"),
+                    tools = emptyList(),
+                    apiKey = "",
+                    modelName = "gemma-4-e4b",
+                ) as LlmResponse.Success
 
-        val response =
-            provider.generateResponse(
-                previousInteractionId = null,
-                input = LlmInput.UserMessage("Please sendMessage to Alice"),
-                tools = listOf(tool),
-                apiKey = "",
-                modelName = "gemma-4-e4b",
-            ) as LlmResponse.Success
+            val secondResponse =
+                provider.generateResponse(
+                    previousInteractionId = firstResponse.interactionId,
+                    input = LlmInput.UserMessage("Follow up query"),
+                    tools = emptyList(),
+                    apiKey = "",
+                    modelName = "gemma-4-e4b",
+                )
 
-        val toolCalls = response.parts.filterIsInstance<LlmResponsePart.ToolCall>()
-        assertEquals(1, toolCalls.size)
-        assertEquals("com.example.chat.sendMessage", toolCalls[0].functionId)
-        assertEquals("com.example.chat", toolCalls[0].packageName)
-    }
+            assertTrue(secondResponse is LlmResponse.Success)
+        }
 
     @Test
-    fun generateResponse_toolResponse_returnsProcessedText() = runBlocking {
-        val response =
-            provider.generateResponse(
-                previousInteractionId = null,
-                input =
-                    LlmInput.ToolResponse(
+    fun generateResponse_toolExecution_handlesToolCalls() =
+        runBlocking {
+            val tool =
+                AppFunctionMetadata(
+                    id = "com.example.chat.sendMessage",
+                    packageName = "com.example.chat",
+                    isEnabled = true,
+                    schema = null,
+                    description = "Sends a chat message",
+                    parameters =
                         listOf(
-                            ToolOutput(
-                                functionId = "com.example.chat.sendMessage",
-                                callId = "call456",
-                                result = "{\"sent\":true}",
+                            AppFunctionParameterMetadata(
+                                name = "text",
+                                isRequired = true,
+                                dataType = AppFunctionStringTypeMetadata(isNullable = false),
+                                description = "Message body",
                             ),
                         ),
-                    ),
-                tools = emptyList(),
-                apiKey = "",
-                modelName = "gemma-4-e4b",
-            ) as LlmResponse.Success
+                    response =
+                        AppFunctionResponseMetadata(
+                            valueType = AppFunctionStringTypeMetadata(isNullable = false),
+                            description = "",
+                        ),
+                    components = AppFunctionComponentsMetadata(emptyMap()),
+                )
 
-        val textParts = response.parts.filterIsInstance<LlmResponsePart.Text>()
-        assertTrue(textParts.any { it.text.contains("sendMessage") })
+            val response =
+                provider.generateResponse(
+                    previousInteractionId = null,
+                    input = LlmInput.UserMessage("Please sendMessage to Alice"),
+                    tools = listOf(tool),
+                    apiKey = "",
+                    modelName = "gemma-4-e4b",
+                ) as LlmResponse.Success
+
+            val toolCalls = response.parts.filterIsInstance<LlmResponsePart.ToolCall>()
+            assertEquals(1, toolCalls.size)
+            assertEquals("com.example.chat.sendMessage", toolCalls[0].functionId)
+            assertEquals("com.example.chat", toolCalls[0].packageName)
+        }
+
+    @Test
+    fun generateResponse_toolResponse_returnsProcessedText() =
+        runBlocking {
+            val response =
+                provider.generateResponse(
+                    previousInteractionId = null,
+                    input =
+                        LlmInput.ToolResponse(
+                            listOf(
+                                ToolOutput(
+                                    functionId = "com.example.chat.sendMessage",
+                                    callId = "call456",
+                                    result = "{\"sent\":true}",
+                                ),
+                            ),
+                        ),
+                    tools = emptyList(),
+                    apiKey = "",
+                    modelName = "gemma-4-e4b",
+                ) as LlmResponse.Success
+
+            val textParts = response.parts.filterIsInstance<LlmResponsePart.Text>()
+            assertTrue(textParts.any { it.text.contains("sendMessage") })
+        }
+
+    @Test
+    fun normalizeToolArguments_gmsDeviceStateMetadata_unwrapsPropertiesAndMapsParams() {
+        val tool =
+            createDeviceStateTool(
+                id = "android.gms.appfunctions.GmsDeviceState#getDeviceStateMetadata",
+                paramName = "getDeviceStateMetadataParams",
+            )
+        val rawArgs =
+            mapOf(
+                "properties" to
+                    mapOf(
+                        "deviceStateMetadata" to mapOf("requestInitiatedWhileUnlocked" to false),
+                    ),
+            )
+
+        val normalized = provider.normalizeToolArguments(tool, rawArgs)
+
+        assertTrue(normalized.containsKey("getDeviceStateMetadataParams"))
+        @Suppress("UNCHECKED_CAST")
+        val params = normalized["getDeviceStateMetadataParams"] as Map<String, Any?>
+        assertEquals(true, params["requestInitiatedWhileUnlocked"])
+    }
+
+    @Test
+    fun normalizeToolArguments_gmsDeviceState_flattenedArguments() {
+        val tool =
+            createDeviceStateTool(
+                id = "android.gms.appfunctions.GmsDeviceState#getUncategorizedDeviceState",
+                paramName = "getUncategorizedDeviceStateParams",
+            )
+        val rawArgs = mapOf("requestInitiatedWhileUnlocked" to true)
+
+        val normalized = provider.normalizeToolArguments(tool, rawArgs)
+
+        assertTrue(normalized.containsKey("getUncategorizedDeviceStateParams"))
+        @Suppress("UNCHECKED_CAST")
+        val params = normalized["getUncategorizedDeviceStateParams"] as Map<String, Any?>
+        assertEquals(true, params["requestInitiatedWhileUnlocked"])
+    }
+
+    @Test
+    fun normalizeToolArguments_gmsDeviceStateItem_resolvesCanonicalKey() {
+        val tool =
+            createDeviceStateTool(
+                id = "android.gms.appfunctions.GmsDeviceState#getDeviceStateItem",
+                paramName = "getDeviceStateItemParams",
+            )
+        val rawArgs =
+            mapOf(
+                "properties" to
+                    mapOf(
+                        "deviceStateItem" to
+                            mapOf(
+                                "key" to listOf("protection", "_share_visibility"),
+                            ),
+                    ),
+            )
+
+        val normalized = provider.normalizeToolArguments(tool, rawArgs)
+
+        assertTrue(normalized.containsKey("getDeviceStateItemParams"))
+        @Suppress("UNCHECKED_CAST")
+        val params = normalized["getDeviceStateItemParams"] as Map<String, Any?>
+        assertEquals("quick_share_visibility", params["key"])
+    }
+
+    @Test
+    fun matchTool_uncategorizedState_matchesGetUncategorizedDeviceState() {
+        val tool =
+            createDeviceStateTool(
+                id = "android.gms.appfunctions.GmsDeviceState#getUncategorizedDeviceState",
+                paramName = "getUncategorizedDeviceStateParams",
+            )
+        val matched = provider.matchTool("getUncategorizedState", listOf(tool))
+        assertNotNull(matched)
+        assertEquals("android.gms.appfunctions.GmsDeviceState#getUncategorizedDeviceState", matched?.id)
+    }
+
+    @Test
+    fun generateResponse_deviceState_matchesToolAndGeneratesParams() =
+        runBlocking {
+            val tool =
+                createDeviceStateTool(
+                    id = "android.gms.appfunctions.GmsDeviceState#getUncategorizedDeviceState",
+                    paramName = "getUncategorizedDeviceStateParams",
+                )
+
+            val response =
+                provider.generateResponse(
+                    previousInteractionId = null,
+                    input = LlmInput.UserMessage("show device state"),
+                    tools = listOf(tool),
+                    apiKey = "",
+                    modelName = "gemma-4-e2b",
+                ) as LlmResponse.Success
+
+            val toolCalls = response.parts.filterIsInstance<LlmResponsePart.ToolCall>()
+            assertEquals(1, toolCalls.size)
+            assertEquals("android.gms.appfunctions.GmsDeviceState#getUncategorizedDeviceState", toolCalls[0].functionId)
+            assertTrue(toolCalls[0].arguments.containsKey("getUncategorizedDeviceStateParams"))
+        }
+
+    @Test
+    fun generateResponse_deviceStateResult_formatsSummary() =
+        runBlocking {
+            val deviceStateJson =
+                """
+                {
+                  "perScreenDeviceStates": [
+                    {
+                      "description": "Theft protection",
+                      "deviceStateItems": [
+                        {
+                          "key": "theft_detection_lock_setting",
+                          "name": { "english": "Theft Detection Lock" },
+                          "jsonValue": "false"
+                        }
+                      ]
+                    },
+                    {
+                      "description": "Quick Share",
+                      "deviceStateItems": [
+                        {
+                          "key": "quick_share_visibility",
+                          "name": { "english": "Receive with Quick Share" },
+                          "jsonValue": "HIDDEN"
+                        }
+                      ]
+                    }
+                  ]
+                }
+                """.trimIndent()
+
+            val response =
+                provider.generateResponse(
+                    previousInteractionId = null,
+                    input =
+                        LlmInput.ToolResponse(
+                            listOf(
+                                ToolOutput(
+                                    functionId = "android.gms.appfunctions.GmsDeviceState#getUncategorizedDeviceState",
+                                    callId = "call789",
+                                    result = deviceStateJson,
+                                ),
+                            ),
+                        ),
+                    tools = emptyList(),
+                    apiKey = "",
+                    modelName = "gemma-4-e2b",
+                ) as LlmResponse.Success
+
+            val textParts = response.parts.filterIsInstance<LlmResponsePart.Text>()
+            assertEquals(1, textParts.size)
+            val text = textParts[0].text
+            assertTrue(text.contains("Theft protection"))
+            assertTrue(text.contains("Theft Detection Lock: Disabled"))
+            assertTrue(text.contains("Quick Share"))
+            assertTrue(text.contains("Receive with Quick Share: Hidden"))
+        }
+
+    private fun createDeviceStateTool(
+        id: String,
+        paramName: String,
+    ): AppFunctionMetadata {
+        val objectType =
+            AppFunctionObjectTypeMetadata(
+                properties =
+                    mapOf(
+                        "requestInitiatedWhileUnlocked" to AppFunctionBooleanTypeMetadata(isNullable = false),
+                    ),
+                required = listOf("requestInitiatedWhileUnlocked"),
+                qualifiedName = null,
+                isNullable = false,
+            )
+        return AppFunctionMetadata(
+            id = id,
+            packageName = "com.google.android.gms",
+            isEnabled = true,
+            schema = null,
+            description = "Gets device state",
+            parameters =
+                listOf(
+                    AppFunctionParameterMetadata(
+                        name = paramName,
+                        isRequired = true,
+                        dataType = objectType,
+                        description = "Parameters",
+                    ),
+                ),
+            response =
+                AppFunctionResponseMetadata(
+                    valueType = AppFunctionStringTypeMetadata(isNullable = false),
+                    description = "",
+                ),
+            components = AppFunctionComponentsMetadata(emptyMap()),
+        )
     }
 }
