@@ -147,25 +147,48 @@ class GemmaProviderImpl private constructor(
             if (engineInitAttempted) return@withLock null
             engineInitAttempted = true
 
-            val modelPath = findModelPath(modelName)
-            if (modelPath == null) {
+            val nativeLibDir = context.applicationInfo.nativeLibraryDir
+            val cacheDir =
+                context.getExternalFilesDir(null)?.absolutePath ?: context.cacheDir.absolutePath
+
+            // 1. Try Qualcomm NPU (QNN) backend with SM8750 model if available
+            val qnnModelPath = findQnnModelPath()
+            if (qnnModelPath != null) {
+                try {
+                    Log.i(TAG, "Attempting LiteRT-LM Engine initialization with Qualcomm NPU at $qnnModelPath (nativeLibDir=$nativeLibDir)...")
+                    val qnnConfig = EngineConfig(
+                        modelPath = qnnModelPath,
+                        backend = Backend.NPU(nativeLibraryDir = nativeLibDir),
+                        cacheDir = cacheDir,
+                    )
+                    val qnnEngine = Engine(qnnConfig)
+                    qnnEngine.initialize()
+                    Log.i(TAG, "LiteRT-LM Engine successfully initialized with Qualcomm NPU backend.")
+                    engine = qnnEngine
+                    return@withLock qnnEngine
+                } catch (e: Throwable) {
+                    Log.w(TAG, "Failed to initialize Qualcomm NPU backend: ${e.message}. Falling back to CPU backend.", e)
+                }
+            }
+
+            // 2. Fall back to CPU backend
+            val cpuModelPath = findCpuModelPath(modelName)
+            if (cpuModelPath == null) {
                 Log.w(TAG, "Gemma model file not found for $modelName. Falling back to heuristic provider.")
                 return@withLock null
             }
 
             try {
-                Log.i(TAG, "Initializing LiteRT-LM Engine with model at $modelPath...")
-                val cacheDir =
-                    context.getExternalFilesDir(null)?.absolutePath ?: context.cacheDir.absolutePath
+                Log.i(TAG, "Initializing LiteRT-LM Engine with CPU backend at $cpuModelPath...")
                 val config = EngineConfig(
-                    modelPath = modelPath,
+                    modelPath = cpuModelPath,
                     backend = Backend.CPU(),
                     maxNumTokens = 8192,
                     cacheDir = cacheDir,
                 )
                 val newEngine = Engine(config)
                 newEngine.initialize()
-                Log.i(TAG, "LiteRT-LM Engine successfully initialized.")
+                Log.i(TAG, "LiteRT-LM Engine successfully initialized with CPU backend.")
                 engine = newEngine
                 newEngine
             } catch (e: Throwable) {
@@ -175,7 +198,16 @@ class GemmaProviderImpl private constructor(
         }
     }
 
-    private fun findModelPath(modelName: String): String? {
+    private fun findQnnModelPath(): String? {
+        val candidates = listOf(
+            "/data/local/tmp/gemma-4-E2B-it_qualcomm_sm8750.litertlm",
+            context?.let { File(it.filesDir, "gemma-4-E2B-it_qualcomm_sm8750.litertlm").absolutePath },
+            context?.let { File(it.getExternalFilesDir(null), "gemma-4-E2B-it_qualcomm_sm8750.litertlm").absolutePath },
+        ).filterNotNull()
+        return candidates.firstOrNull { File(it).exists() }
+    }
+
+    private fun findCpuModelPath(modelName: String): String? {
         val candidates = listOf(
             "/data/local/tmp/gemma-4-E2B-it.litertlm",
             "/data/local/tmp/gemma-4-E4B-it.litertlm",
@@ -271,12 +303,13 @@ class GemmaProviderImpl private constructor(
                 val matchedTool = matchTool(toolCall.name, tools)
 
                 if (matchedTool != null) {
-                    Log.i(TAG, "Successfully matched native ToolCall: ${matchedTool.id} args=${toolCall.arguments}")
+                    val normalizedArgs = normalizeToolArguments(matchedTool, toolCall.arguments)
+                    Log.i(TAG, "Successfully matched native ToolCall: ${matchedTool.id} args=$normalizedArgs")
                     parts.add(
                         LlmResponsePart.ToolCall(
                             packageName = matchedTool.packageName,
                             functionId = matchedTool.id,
-                            arguments = toolCall.arguments,
+                            arguments = normalizedArgs,
                             callId = UUID.randomUUID().toString(),
                         )
                     )
@@ -330,10 +363,61 @@ class GemmaProviderImpl private constructor(
 
         // 4. Match simple function name suffix (e.g. "makeCall", "searchContacts", "sendMessage")
         val simpleFunctionName = toolCallName.substringAfterLast("_").lowercase()
-        return tools.firstOrNull { tool ->
+        tools.firstOrNull { tool ->
             val toolSimple = tool.id.substringAfterLast("#").substringAfterLast(".").lowercase()
-            toolSimple == simpleFunctionName
+            toolSimple == simpleFunctionName ||
+                toolSimple.endsWith(simpleFunctionName) ||
+                simpleFunctionName.endsWith(toolSimple) ||
+                (simpleFunctionName == "call" && toolSimple.contains("call")) ||
+                (simpleFunctionName == "message" && toolSimple.contains("message"))
+        }?.let { return it }
+
+        // 5. Keyword search in tool id
+        val keywords = listOf("call", "contact", "message", "email", "search")
+        for (keyword in keywords) {
+            if (toolCallName.lowercase().contains(keyword)) {
+                tools.firstOrNull { it.id.lowercase().contains(keyword) }?.let { return it }
+            }
         }
+        return null
+    }
+
+    private fun normalizeToolArguments(
+        tool: AppFunctionMetadata,
+        rawArgs: Map<String, Any?>,
+    ): Map<String, Any?> {
+        val result = rawArgs.toMutableMap()
+        for (param in tool.parameters) {
+            if (param.name in result && result[param.name] != null) continue
+
+            // 1. Try endpointValue aliases
+            if (param.name.equals("endpointValue", ignoreCase = true)) {
+                val candidate = rawArgs["endpointValue"] ?: rawArgs["recipientId"]
+                    ?: rawArgs["contactId"] ?: rawArgs["endpoint"] ?: rawArgs["id"]
+                if (candidate != null) {
+                    result[param.name] = candidate
+                    continue
+                }
+            }
+
+            // 2. Try case-insensitive or substring matching
+            val matchedEntry = rawArgs.entries.firstOrNull { (k, v) ->
+                v != null && (
+                    param.name.endsWith(k, ignoreCase = true) ||
+                    k.endsWith(param.name, ignoreCase = true) ||
+                    param.name.equals(k, ignoreCase = true)
+                )
+            }
+            if (matchedEntry != null) {
+                result[param.name] = matchedEntry.value
+            } else if (param.isRequired) {
+                // Default value heuristics for well-known parameters
+                if (param.name.equals("contactType", ignoreCase = true)) {
+                    result[param.name] = "INDIVIDUAL"
+                }
+            }
+        }
+        return result
     }
 
     private fun parseToolCallFromText(
