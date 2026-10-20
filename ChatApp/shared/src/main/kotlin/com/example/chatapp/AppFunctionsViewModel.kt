@@ -18,13 +18,14 @@ package com.example.chatapp
 import android.app.Application
 import androidx.appfunctions.AppFunctionManager
 import androidx.appfunctions.AppFunctionSearchSpec
+import androidx.appfunctions.metadata.AppFunctionName
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -66,30 +67,50 @@ class AppFunctionsViewModel
         private val appFunctionManager = AppFunctionManager.getInstance(application)
 
         val uiState: StateFlow<AppFunctionsUiState> =
-            appFunctionManager?.observeAppFunctions(
-                AppFunctionSearchSpec(packageNames = setOf(application.packageName)),
-            )?.map { packageMetadataList ->
-                val functions =
-                    packageMetadataList.firstOrNull {
-                        it.packageName == application.packageName
-                    }?.appFunctions ?: emptyList()
+            appFunctionManager?.let { manager ->
+                flow {
+                    suspend fun loadFunctions(): AppFunctionsUiState {
+                        val metadataList =
+                            manager.searchAppFunctions(
+                                AppFunctionSearchSpec(packageNames = setOf(application.packageName)),
+                            )
 
-                val functionInfos =
-                    functions.map {
-                        AppFunctionInfo(
-                            id = it.id,
-                            isEnabled = it.isEnabled,
-                            description = it.description,
-                        )
-                    }.sortedBy { it.id }
+                        val functionNames =
+                            metadataList.map { metadata ->
+                                AppFunctionName(metadata.packageName, metadata.id)
+                            }
+                        val states =
+                            if (functionNames.isNotEmpty()) {
+                                manager.getAppFunctionStates(functionNames)
+                                    .associateBy { it.functionName.functionIdentifier }
+                            } else {
+                                emptyMap()
+                            }
 
-                AppFunctionsUiState(functions = functionInfos)
-            }?.stateIn(
-                scope = viewModelScope,
-                started = SharingStarted.WhileSubscribed(5000),
-                initialValue = AppFunctionsUiState(),
-            )
-                ?: MutableStateFlow(AppFunctionsUiState())
+                        val functionInfos =
+                            metadataList.map { metadata ->
+                                val isEnabled = states[metadata.id]?.isEnabled ?: true
+                                AppFunctionInfo(
+                                    id = metadata.id,
+                                    isEnabled = isEnabled,
+                                    description = metadata.schema?.category,
+                                )
+                            }.sortedBy { it.id }
+
+                        return AppFunctionsUiState(functions = functionInfos)
+                    }
+
+                    emit(loadFunctions())
+
+                    manager.observeAppFunctions().collect {
+                        emit(loadFunctions())
+                    }
+                }.stateIn(
+                    scope = viewModelScope,
+                    started = SharingStarted.WhileSubscribed(5000),
+                    initialValue = AppFunctionsUiState(),
+                )
+            } ?: MutableStateFlow(AppFunctionsUiState())
 
         /**
          * Toggles the enabled state of an app function.
