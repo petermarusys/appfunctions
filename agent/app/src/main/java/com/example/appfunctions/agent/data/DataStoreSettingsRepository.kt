@@ -53,6 +53,7 @@ class DataStoreSettingsRepository
                 preferences[PreferencesKeys.SELECTED_PROVIDER]?.let { storedValue ->
                     when (storedValue.uppercase()) {
                         "GEMINI" -> LlmProviderName.GEMINI
+                        "GEMMA" -> LlmProviderName.GEMMA
                         else -> LlmProviderName.GEMINI
                     }
                 } ?: LlmProviderName.GEMINI

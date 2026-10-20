@@ -377,13 +377,12 @@ class AgentOrchestratorTest {
     private fun createMockTool(
         packageName: String,
         id: String,
-        isEnabled: Boolean = true,
+        @Suppress("UNUSED_PARAMETER") isEnabled: Boolean = true,
     ): AppFunctionMetadata {
         val tool = mockk<AppFunctionMetadata>(relaxed = true)
         every { tool.packageName } returns packageName
         every { tool.id } returns id
         every { tool.name } returns AppFunctionName(packageName, id)
-        every { tool.isEnabled } returns isEnabled
         return tool
     }
 

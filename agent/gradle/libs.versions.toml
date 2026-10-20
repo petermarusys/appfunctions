@@ -22,7 +22,7 @@ hilt = "2.60.1"
 androidxHiltNavigationCompose = "1.4.0"
 appfunctions = "1.0.0-alpha13"
 datastore = "1.2.1"
-screenshot = "0.0.1-alpha16"
+screenshot = "0.0.1-alpha15"
 coil = "2.7.0"
 room = "2.8.5"
 ktor = "3.6.0"
@@ -30,10 +30,12 @@ kotlinxSerialization = "1.11.0"
 playServicesOssLicenses = "17.5.2"
 ossLicensesPlugin = "0.13.0"
 multiplatformMarkdownRenderer = "0.46.0"
+litertlm = "0.13.1"
 #noinspection UnusedVersionCatalogEntry - Accessed dynamically
 ktlint = "1.2.1"
 
 [libraries]
+litertlm-android = { group = "com.google.ai.edge.litertlm", name = "litertlm-android", version.ref = "litertlm" }
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
 androidx-lifecycle-viewmodel-compose = { group = "androidx.lifecycle", name = "lifecycle-viewmodel-compose", version.ref = "lifecycleViewmodelCompose" }
 androidx-lifecycle-runtime-compose = { group = "androidx.lifecycle", name = "lifecycle-runtime-compose", version.ref = "lifecycleViewmodelCompose" }

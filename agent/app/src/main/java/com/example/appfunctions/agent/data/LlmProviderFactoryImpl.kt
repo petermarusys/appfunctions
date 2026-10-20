@@ -26,10 +26,12 @@ class LlmProviderFactoryImpl
     @Inject
     constructor(
         private val geminiProvider: GeminiProviderImpl,
+        private val gemmaProvider: GemmaProviderImpl,
     ) : LlmProviderFactory {
         override fun getProvider(name: LlmProviderName): LlmProvider {
             return when (name) {
                 LlmProviderName.GEMINI -> geminiProvider
+                LlmProviderName.GEMMA -> gemmaProvider
             }
         }
     }
