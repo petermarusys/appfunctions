@@ -38,7 +38,6 @@ class MainViewModel
     constructor(
         private val checkAppFunctionPermissionUseCase: CheckAppFunctionPermissionUseCase,
         private val checkOsVersionUseCase: CheckOsVersionUseCase,
-        private val checkMainlineVersionUseCase: CheckMainlineVersionUseCase,
         savedStateHandle: SavedStateHandle,
     ) : ViewModel() {
         private val _uiState = MutableStateFlow(MainUiState())
@@ -60,9 +59,8 @@ class MainViewModel
         /** Checks the app status including support and permission. */
         fun checkAppStatus() {
             val isOsSupported = checkOsVersionUseCase()
-            val isMainlineSupported = checkMainlineVersionUseCase()
 
-            if (!isOsSupported || !isMainlineSupported) {
+            if (!isOsSupported) {
                 _uiState.value =
                     _uiState.value.copy(
                         appStatus = AppStatus.NotSupported,
